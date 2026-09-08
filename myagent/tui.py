@@ -101,8 +101,8 @@ class ChatApp(App):
         self.query_one("#chat").scroll_end(animate=False)
         self._stream_text = ""
 
-        # 后台线程跑 agent，不卡 UI
-        self.run_worker(self._run_agent(text))
+        # 后台线程跑 agent，不卡 UI（@work(thread=True) 会自动启动 worker）
+        self._run_agent(text)
 
     @work(thread=True)
     def _run_agent(self, text: str) -> None:
