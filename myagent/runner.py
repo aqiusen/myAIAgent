@@ -48,6 +48,8 @@ class Runner:
         # confirm_callback(command) -> bool：ask 模式下询问用户是否放行。
         # 未提供时默认拒绝（fail-closed）。
         self.confirm_callback = confirm_callback
+        # tool_callback(name, args) -> None：工具调用时回调（TUI 用它展示工具调用）。
+        self.tool_callback = None
 
     def _one_call(
         self,
@@ -147,9 +149,6 @@ class Runner:
             content = result["content"]
             tool_calls = result["tool_calls"]
 
-            # 调试：打印模型这一轮返回的原始结构（含 tool_calls）
-            print("\n[DEBUG] 模型本轮返回:", result)
-
             if tool_calls:
                 # 1) 把模型的这个调用意图放进消息，供继续对话
                 messages.append({
@@ -160,7 +159,10 @@ class Runner:
 
                 # 2) 逐个工具执行，把结果塞回消息
                 for tc in tool_calls:
-                    print(f"\n  [工具调用] {tc['function']['name']}({tc['function']['arguments']})")
+                    if self.tool_callback is not None:
+                        self.tool_callback(
+                            tc["function"]["name"], tc["function"]["arguments"]
+                        )
                     result_text = self._dispatch(tc)
                     messages.append({
                         "role": "tool",

@@ -57,17 +57,19 @@ class Agent:
         self.memory.add_system(config.system_prompt)
         self.schemas = tools.SCHEMAS  # 工具声明（只给模型看的那份）
 
-    def run(self, user_input: str, on_delta=None) -> str:
+    def run(self, user_input: str, on_delta=None, on_tool_call=None) -> str:
         """接收用户一句话，返回 agent 的最终文字回答。
 
         on_delta：可选回调，流式输出时每生成一段文字就调用一次
         （由 CLI 传入，用来边生成边打印）。
+        on_tool_call：可选回调，工具调用时调用 (name, args_json)。
         """
         # 1) 把用户输入写入历史
         self.memory.add_user(user_input)
 
         # 2) 取裁剪后的消息列表跑核心循环
         messages = self.memory.snapshot()
+        self.runner.tool_callback = on_tool_call
         answer = self.runner.run(messages, self.schemas, on_delta=on_delta)
 
         # 3) 把最终答案写回历史，供下一轮对话引用
