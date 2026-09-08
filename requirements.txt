@@ -1,0 +1,6 @@
+# 本项目的外部依赖：
+# 1. OpenAI 官方 SDK：既能连 OpenAI，也能连任何 OpenAI 兼容端点（如 DeepSeek、本地 vLLM、Ollama 等）。
+# 2. prompt_toolkit：生产级交互输入库，读原始字节、自带历史/多行/IME 支持，
+#    从架构上绕开终端编码不匹配问题（详见 docs/prompt_toolkit使用原因.md）。
+openai>=1.40,<3
+prompt_toolkit>=3.0
