@@ -2,22 +2,20 @@
 
 对应 Suna 的 TUI：负责跟用户打交道 + 打印渲染，不装任何业务语义。
 
-阶段 1 是最简版：一个 while True 的 REPL，用 input() 读输入。
-阶段 2 升级：改用 prompt_toolkit 读输入，解决终端编码不匹配问题，
-并顺带获得历史记录、多行输入、IME 支持等能力。
-（为什么替换，见 docs/prompt_toolkit使用原因.md）
+阶段 1：最简版 REPL，用 input() 读输入。
+阶段 2：改用 prompt_toolkit 读输入，解决编码问题。
+阶段 3：改用 Textual 做完整 TUI（聊天界面 + 流式输出 + 工具展示）。
+（为什么升级，见 docs/prompt_toolkit使用原因.md 与 docs/Textual界面.md）
 """
-from .config import Config
-from .agent import Agent
 import sys
 
-from prompt_toolkit import PromptSession
-from prompt_toolkit.history import InMemoryHistory
+from .config import Config
+from .agent import Agent
+from .tui import run_tui
 
 
 def main() -> None:
     # 输出统一用 UTF-8，避免打印中文时报错。
-    # 输入不再手动处理编码——prompt_toolkit 读原始字节，从架构上绕开编码问题。
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8")
@@ -30,44 +28,9 @@ def main() -> None:
         return
 
     # 2) 组装 agent
-    # prompt_toolkit 的 PromptSession：读原始字节 + 自带历史记录。
-    # 先建 session，供 confirm_callback 复用（ask 模式询问用户）。
-    session = PromptSession(history=InMemoryHistory())
+    # ask 模式下 Guard 需要用户确认。TUI 里默认拒绝（fail-closed），
+    # 避免线程交互复杂度；默认 smart 模式用 LLM 审查，不依赖用户确认。
+    agent = Agent(config, confirm_callback=lambda params: False)
 
-    # confirm_callback：ask 模式下，Guard 遇到风险操作时询问用户是否放行。
-    def confirm_callback(params) -> bool:
-        command = params.get("command", "")
-        try:
-            answer = session.prompt(f"\n[Guard] 是否允许执行该命令？(y/N) {command}\n> ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            return False
-        return answer in ("y", "yes")
-
-    agent = Agent(config, confirm_callback=confirm_callback)
-
-    # 3) 招呼一下
-    print("my-agent 已启动。输入你的问题，输入 /quit 退出。\n")
-
-    # 4) 对话循环
-    while True:
-        try:
-            user_input = session.prompt("牛逼大森哥:> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\n再见")
-            break
-
-        if not user_input:
-            continue
-        if user_input.strip() == "/quit":
-            print("再见")
-            break
-
-        # 单轮：流式输出，边生成边打印（阶段 1.2）
-        # on_delta 回调负责把每个文字片段实时打出来（不换行、立即刷新）。
-        print("\nAgent> ", end="", flush=True)
-        answer = agent.run(
-            user_input,
-            on_delta=lambda text: print(text, end="", flush=True),
-        )
-        print()  # 流式结束后补一个换行
-        print("-" * 40)
+    # 3) 启动 Textual 聊天界面
+    run_tui(agent)

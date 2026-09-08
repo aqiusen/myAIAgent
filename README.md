@@ -16,17 +16,19 @@ my-agent/
 │   ├── agent.py              编排，暴露 run()   ← internal/agent
 │   ├── runner.py             模型-工具循环(心脏) ← internal/runner
 │   ├── guard.py              安全 Guard        ← internal/guard
+│   ├── tui.py                Textual 聊天界面   ← internal/tui
 │   ├── tools/
 │   │   ├── base.py           工具抽象/声明      ← internal/tools
 │   │   └── builtin.py        内置工具(文件/命令) ← internal/tools/builtin
-│   └── cli.py                命令行交互         ← internal/tui
+│   └── cli.py                命令行入口         ← internal/tui
 └── docs/                     学习文档
     ├── architecture.md       为什么分层
     ├── tech-decisions.md     选型原因
     ├── core-loop.md          核心循环(必读)
     ├── roadmap.md            下一步扩展
     ├── prompt_toolkit使用原因.md  输入层升级记录
-    └── 安全Guard实现.md           Guard 设计记录
+    ├── 安全Guard实现.md           Guard 设计记录
+    └── Textual界面.md            TUI 界面升级记录
 ```
 
 ## 快速开始
