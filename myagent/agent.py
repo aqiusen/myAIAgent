@@ -13,12 +13,13 @@ from .memory import Memory
 from .runner import Runner
 from .guard import Guard, build_guard
 from .store import Store
+from .model_registry import ModelRegistry
 from . import tools
 
 
 # smart 模式默认的 LLM 审查器：用同一个模型判断命令是否危险。
 # 审风险不审意图：只判断操作本身是否危险，不判断是否符合用户意图。
-def _default_llm_reviewer(client, model: str):
+def _default_llm_reviewer(provider, model: str):
     def reviewer(command: str, params_json: str) -> str:
         prompt = (
             "你是命令安全审查器。判断下面这条 shell 命令是否危险。\n"
@@ -26,7 +27,7 @@ def _default_llm_reviewer(client, model: str):
             f"命令: {command}\n"
             f"参数: {params_json}\n"
         )
-        resp = client.chat.completions.create(
+        resp = provider.client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0,
@@ -37,8 +38,12 @@ def _default_llm_reviewer(client, model: str):
 
 
 class Agent:
-    def __init__(self, config: Config, confirm_callback=None, session_id=None):
+    def __init__(self, config: Config, confirm_callback=None, session_id=None, model_ref="default"):
         self.config = config
+
+        # 模型注册表（对应 Suna 的 Router）：持有多个模型，按 ref 路由。
+        self.registry = ModelRegistry(config.models)
+        self.model_ref = model_ref
 
         # 可选持久化：建 Store；新会话等第一条消息再落库，避免空会话。
         self.store = None
@@ -56,15 +61,16 @@ class Agent:
         if session_id is not None and self.store is not None:
             self.memory.load_from_store(session_id)
 
-        # 先建 Runner（它持有模型客户端），再建 Guard 复用其客户端。
-        self.runner = Runner(config)
+        # 先建 Runner（它持有模型 Provider），再建 Guard 复用其客户端。
+        provider = self.registry.get_provider(model_ref)
+        self.runner = Runner(config, provider=provider)
 
         # 创建 Guard（参考 Suna internal/guard）
         audit_path = config.guard_audit_path or None
         guard = build_guard(mode=config.guard_mode, audit_path=audit_path)
-        # smart 模式：注入 LLM 审查器（用同一个模型客户端）
+        # smart 模式：注入 LLM 审查器（用同一个模型 Provider）
         if guard.mode == "smart":
-            guard.llm_reviewer = _default_llm_reviewer(self.runner.client, config.model)
+            guard.llm_reviewer = _default_llm_reviewer(provider, config.model)
         self.guard = guard
         self.runner.guard = guard
         self.runner.confirm_callback = confirm_callback

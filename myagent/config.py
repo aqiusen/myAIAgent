@@ -10,8 +10,12 @@
     等到需要多端配置时再升级成文件读取，思路完全一样。
 """
 import os
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import List
+
+from .model_registry import ModelConfig
 
 
 # 项目根目录（config.py 位于 myagent/ 下，上一级即根目录）
@@ -61,6 +65,9 @@ class Config:
     base_url: str       # OpenAI 兼容端点，OpenAI 官方就是 https://api.openai.com/v1
     api_key: str        # 凭据，从环境变量读取
 
+    # 多模型配置（对应 Suna 的 Router）。第一个是主模型，其余来自 MY_AGENT_MODELS。
+    models: List[ModelConfig] = field(default_factory=list)
+
     temperature: float = 0.7   # 温度：越低越确定，越高越有创造力
     max_tokens: int = 1024     # 单次生成上限，防止模型话痨烧钱
 
@@ -109,12 +116,43 @@ class Config:
                 '  export MY_AGENT_BASE_URL=兼容端点    # 例如 https://api.openai.com/v1'
             )
 
+        model = os.environ.get("MY_AGENT_MODEL", "gpt-4o-mini")
+        base_url = os.environ.get("MY_AGENT_BASE_URL", "https://api.openai.com/v1")
+
+        # 主模型（第一个，ref=default）
+        models = [
+            ModelConfig(
+                ref="default",
+                model=model,
+                base_url=base_url,
+                api_key=api_key,
+            )
+        ]
+        # 额外模型：MY_AGENT_MODELS 是 JSON 数组，如
+        #   [{"ref":"gpt4o","model":"gpt-4o","base_url":"...","api_key":"..."}]
+        extra = os.environ.get("MY_AGENT_MODELS", "")
+        if extra.strip():
+            try:
+                for item in json.loads(extra):
+                    models.append(
+                        ModelConfig(
+                            ref=item.get("ref", ""),
+                            model=item.get("model", ""),
+                            base_url=item.get("base_url", ""),
+                            api_key=item.get("api_key", ""),
+                            provider=item.get("provider", "openai"),
+                            temperature=float(item.get("temperature", 0.7)),
+                            max_tokens=int(item.get("max_tokens", 1024)),
+                        )
+                    )
+            except (json.JSONDecodeError, ValueError) as exc:
+                raise RuntimeError(f"MY_AGENT_MODELS 解析失败: {exc}")
+
         return cls(
-            model=os.environ.get("MY_AGENT_MODEL", "gpt-4o-mini"),
-            base_url=os.environ.get(
-                "MY_AGENT_BASE_URL", "https://api.openai.com/v1"
-            ),
+            model=model,
+            base_url=base_url,
             api_key=api_key,
+            models=models,
             guard_mode=os.environ.get("MY_AGENT_GUARD_MODE", "smart"),
             guard_audit_path=os.environ.get("MY_AGENT_GUARD_AUDIT", ""),
             max_tokens=int(os.environ.get("MY_AGENT_MAX_TOKENS", "8000")),

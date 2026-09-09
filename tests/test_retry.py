@@ -19,8 +19,15 @@ class Cfg:
 
 
 def make_runner(client):
+    class FakeProvider:
+        def __init__(self, client):
+            self.client = client
+        def complete(self, **kwargs):
+            resp = self.client.chat.completions.create(**kwargs)
+            msg = resp.choices[0].message
+            return {"content": msg.content or "", "tool_calls": []}
     r = Runner(Cfg())
-    r.client = client
+    r.provider = FakeProvider(client)  # 用假 provider 替换真实 provider
     return r
 
 

@@ -44,7 +44,7 @@ def fake_stream():
 
 def test_stream_accumulates_content_and_tool_calls():
     r = Runner(Cfg())
-    r.client.chat.completions.create = lambda **kw: fake_stream()
+    r.provider.client.chat.completions.create = lambda **kw: fake_stream()
 
     collected = []
     result = r._one_call([], [], on_delta=collected.append)

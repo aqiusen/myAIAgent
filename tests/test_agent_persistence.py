@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from myagent.config import Config
 from myagent.agent import Agent
 from myagent.store import Store
+from myagent.model_registry import ModelConfig
 
 
 def make_config(db_path):
@@ -15,6 +16,7 @@ def make_config(db_path):
         base_url="http://x",
         api_key="k",
         db_path=db_path,
+        models=[ModelConfig(ref="default", model="m", base_url="http://x", api_key="k")],
     )
 
 
@@ -71,7 +73,10 @@ def test_agent_reloads_session(tmp_path):
 
 
 def test_agent_without_db_no_store(tmp_path):
-    c = Config(model="m", base_url="http://x", api_key="k", db_path="")
+    c = Config(
+        model="m", base_url="http://x", api_key="k", db_path="",
+        models=[ModelConfig(ref="default", model="m", base_url="http://x", api_key="k")],
+    )
     a = Agent(c, confirm_callback=lambda p: False)
     assert a.store is None
     assert a.session_id is None

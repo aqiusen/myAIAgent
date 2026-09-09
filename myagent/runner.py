@@ -31,10 +31,10 @@
 """
 from typing import List, Dict, Optional, Callable
 import time
-from openai import OpenAI
 
 from .guard import Guard, APPROVE, REJECT, CONFIRM
 from .errors import classify_error, retryable, ModelError
+from .providers import BaseProvider, OpenAICompatibleProvider
 
 MAX_ITERATIONS = 8  # 单次对话最多允许的模型-工具往返轮数，防死循环
 
@@ -45,11 +45,23 @@ MODEL_TIMEOUT = 60           # 单次请求超时（秒）
 
 
 class Runner:
-    """持有模型客户端，负责"一轮对话里反复调用模型直到出答案"。"""
+    """持有模型 Provider，负责"一轮对话里反复调用模型直到出答案"。"""
 
-    def __init__(self, config, guard: Optional[Guard] = None, confirm_callback=None):
-        # OpenAI SDK 的客户端。传 base_url 就能对接任意 OpenAI 兼容端点。
-        self.client = OpenAI(api_key=config.api_key, base_url=config.base_url)
+    def __init__(
+        self,
+        config,
+        guard: Optional[Guard] = None,
+        confirm_callback=None,
+        provider: Optional[BaseProvider] = None,
+    ):
+        # 模型 Provider（对应 Suna 的 Adapter）。
+        # 不传则用主模型建一个 OpenAI 兼容 Provider。
+        self.provider = provider or OpenAICompatibleProvider(
+            model=config.model,
+            base_url=config.base_url,
+            api_key=config.api_key,
+            timeout=MODEL_TIMEOUT,
+        )
         self.config = config
         self.guard = guard
         # confirm_callback(command) -> bool：ask 模式下询问用户是否放行。
@@ -90,84 +102,18 @@ class Runner:
     ) -> Dict:
         """发一次请求（不重试），返回统一结构：{"content": str, "tool_calls": [..]}。
 
-        阶段 1.2 新增：支持流式。
-          - 不传 on_delta → 非流式，一次性拿完整结果（老行为）。
-          - 传了 on_delta → stream=True，每来一段文字就回调 on_delta(text)，
-            让调用方（CLI）边生成边打印。
-
-        为什么返回统一结构而不是原始 response？
-          因为流式和非流式拿到的对象长得不一样（一个是 chunk 流、一个是完整对象），
-          把差异收敛在这里，run() 主循环就不用关心是哪种模式了。
+        实际调用委托给 Provider（对应 Suna 的 Adapter），
+        Provider 内部处理流式/非流式，返回统一结构。
         """
         stream = on_delta is not None
-        response = self.client.chat.completions.create(
-            model=self.config.model,
+        return self.provider.complete(
             messages=messages,
-            tools=schemas,                      # 把工具声明交给模型
+            tools=schemas,
             temperature=self.config.temperature,
             max_tokens=self.config.max_tokens,
             stream=stream,
-            timeout=MODEL_TIMEOUT,              # 单次请求超时保护
+            on_delta=on_delta,
         )
-
-        if not stream:
-            # ---- 非流式：一次性拿完整结果 ----
-            msg = response.choices[0].message
-            return {
-                "content": msg.content or "",
-                "tool_calls": [
-                    {
-                        "id": tc.id,
-                        "type": tc.type,
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
-                        },
-                    }
-                    for tc in (getattr(msg, "tool_calls", None) or [])
-                ],
-            }
-
-        # ---- 流式：逐 chunk 累加 ----
-        # 流式下模型把内容拆成很多小片（chunk）发过来，我们要自己拼回去。
-        # 难点：tool_calls 也是分片来的，每个分片带一个 index，
-        #       必须按 index 归并，arguments 是逐段拼接的字符串。
-        content_parts: List[str] = []
-        tool_calls: Dict[int, Dict] = {}  # index -> {id, name, arguments}
-
-        for chunk in response:
-            if not chunk.choices:
-                continue
-            delta = chunk.choices[0].delta
-
-            # 文字部分：累加 + 实时回调给调用方打印
-            if delta.content:
-                content_parts.append(delta.content)
-                on_delta(delta.content)
-
-            # 工具调用部分：按 index 归并
-            for tc in (getattr(delta, "tool_calls", None) or []):
-                entry = tool_calls.setdefault(
-                    tc.index, {"id": "", "name": "", "arguments": ""}
-                )
-                if tc.id:
-                    entry["id"] = tc.id
-                if tc.function:
-                    if tc.function.name:
-                        entry["name"] = tc.function.name
-                    if tc.function.arguments:
-                        entry["arguments"] += tc.function.arguments
-
-        # 把按 index 归并好的 dict 转成和上面非流式一样的结构
-        tool_calls_list = [
-            {
-                "id": entry["id"],
-                "type": "function",
-                "function": {"name": entry["name"], "arguments": entry["arguments"]},
-            }
-            for _, entry in sorted(tool_calls.items())
-        ]
-        return {"content": "".join(content_parts), "tool_calls": tool_calls_list}
 
     def run(
         self,
