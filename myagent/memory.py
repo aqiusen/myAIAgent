@@ -18,6 +18,8 @@
 """
 from typing import List, Dict, Optional
 
+from .store import title_from_user_input
+
 
 # OpenAI 消息结构是一个字典列表，每个字典有 role/content 字段。
 Message = Dict[str, str]
@@ -77,8 +79,14 @@ class Memory:
         self._persist("tool", content, tool_call_id)
 
     def _persist(self, role: str, content: str, tool_call_id: str = "") -> None:
-        if self.store is not None and self.session_id is not None:
+        if self.store is not None:
+            if self.session_id is None:
+                self.session_id = self.store.create_session()
             self.store.save_message(self.session_id, role, content, tool_call_id)
+            if role == "user":
+                title = title_from_user_input(content)
+                if title:
+                    self.store.update_session_title(self.session_id, title)
 
     # ---------- 读消息 ----------
     def snapshot(self) -> Messages:

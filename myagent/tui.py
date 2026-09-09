@@ -10,15 +10,52 @@
   - on_tool_call 回调把工具调用显示为居中的系统消息。
   - Guard 的 ask 模式确认：默认拒绝（fail-closed），避免线程交互复杂度。
 """
+import re
 from typing import Optional
 
+from rich.cells import cell_len
+from rich.markdown import Markdown
+from rich.measure import Measurement
+from textual import events, work
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll, Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Header, Footer, Input, Label, Static
-from textual import work
 
 from .agent import Agent
+
+
+LINK_RE = re.compile(r"!\[([^\]]*)\]\([^)]+\)|\[([^\]]+)\]\([^)]+\)")
+INLINE_MARK_RE = re.compile(r"(\*\*|__|\*|_|`|~~)")
+LIST_MARK_RE = re.compile(r"^\s*(?:[-*+]|\d+\.)\s+")
+
+
+class BubbleMarkdown:
+    """Rich Markdown renderable with content-sized layout measurement."""
+
+    def __init__(self, text: str):
+        self.text = text
+        self.markdown = Markdown(text, justify="left")
+
+    def __rich_console__(self, console, options):
+        yield from self.markdown.__rich_console__(console, options)
+
+    def __rich_measure__(self, console, options):
+        width = min(_markdown_content_width(self.text), options.max_width)
+        return Measurement(width, width)
+
+
+def _markdown_content_width(text: str) -> int:
+    widths = [cell_len(_plain_markdown_line(line)) for line in text.splitlines()]
+    return max(widths or [1], default=1)
+
+
+def _plain_markdown_line(line: str) -> str:
+    line = line.strip()
+    line = line.lstrip("#> ")
+    line = LIST_MARK_RE.sub("", line)
+    line = LINK_RE.sub(lambda m: m.group(1) or m.group(2) or "", line)
+    return INLINE_MARK_RE.sub("", line)
 
 
 class NicknameModal(ModalScreen[Optional[str]]):
@@ -149,7 +186,7 @@ class ChatApp(App):
         padding: 0 1;
         width: auto;
         height: auto;
-        max-width: 100%;
+        max-width: 88%;
         border: round $primary;
     }
     .user-row .bubble {
@@ -180,6 +217,9 @@ class ChatApp(App):
         self._stream = None          # 当前流式输出的气泡 Static
         self._stream_text = ""       # 流式输出累积文本
         self.nickname = "我"          # 用户消息右侧的迷你标识
+        self._input_history = self._loaded_user_inputs()
+        self._history_index: Optional[int] = None
+        self._history_draft = ""
 
     # ---------- 界面搭建 ----------
     def compose(self) -> ComposeResult:
@@ -214,6 +254,17 @@ class ChatApp(App):
                 short = content if len(content) <= 80 else content[:77] + "..."
                 self._add_message("工具", short, "tool-row")
 
+    def _loaded_user_inputs(self) -> list[str]:
+        msgs = getattr(self.agent, "memory", None)
+        msgs = getattr(msgs, "_messages", None) if msgs else None
+        if not msgs:
+            return []
+        return [
+            m.get("content", "")
+            for m in msgs
+            if m.get("role") == "user" and m.get("content")
+        ]
+
     # ---------- 消息渲染 ----------
     def _add_message(self, sender: str, text: str, row_cls: str) -> None:
         """添加一条消息：sender 标签 + 气泡，按 row_cls 靠左/靠右/居中。"""
@@ -225,7 +276,7 @@ class ChatApp(App):
     def _build_message_row(self, sender: str, text: str, row_cls: str):
         """构建一行消息。聊天消息只显示气泡，系统消息仍保持简洁居中。"""
         if row_cls in {"user-row", "agent-row"}:
-            bubble = Static(text, classes="bubble")
+            bubble = Static(self._chat_renderable(text, row_cls), classes="bubble")
             avatar_text = self.nickname if row_cls == "user-row" else "AI"
             avatar = Static(avatar_text, classes="avatar")
             if row_cls == "user-row":
@@ -234,6 +285,10 @@ class ChatApp(App):
 
         bubble = Static(f"[bold]{sender}:[/] {text}", classes="bubble")
         return Horizontal(bubble, classes=f"msg-row {row_cls}"), bubble
+
+    @staticmethod
+    def _chat_renderable(text: str, row_cls: str):
+        return BubbleMarkdown(text) if row_cls == "agent-row" else text
 
     def _add_tool_call(self, name: str, args: str) -> None:
         """工具调用：居中显示为系统消息。"""
@@ -244,7 +299,7 @@ class ChatApp(App):
         if self._stream is None:
             return
         self._stream_text += delta
-        self._stream.update(self._stream_text)
+        self._stream.update(self._chat_renderable(self._stream_text, "agent-row"))
         self.query_one("#chat").scroll_end(animate=False)
 
     def _finish_stream(self) -> None:
@@ -268,6 +323,7 @@ class ChatApp(App):
             self._set_nickname(text.removeprefix("/setting ").strip())
             return
         self.query_one("#input").clear()
+        self._remember_input(text)
         self._add_message("你", text, "user-row")
 
         # 创建 Agent 流式气泡（靠左）
@@ -278,6 +334,42 @@ class ChatApp(App):
 
         # 后台线程跑 agent，不卡 UI（@work(thread=True) 会自动启动 worker）
         self._run_agent(text)
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key not in {"up", "down"}:
+            return
+        input_box = self.query_one("#input", Input)
+        if not input_box.has_focus:
+            return
+        event.stop()
+        event.prevent_default()
+        self._move_input_history(-1 if event.key == "up" else 1)
+
+    def _remember_input(self, text: str) -> None:
+        if not self._input_history or self._input_history[-1] != text:
+            self._input_history.append(text)
+        self._history_index = None
+        self._history_draft = ""
+
+    def _move_input_history(self, step: int) -> None:
+        if not self._input_history:
+            return
+        input_box = self.query_one("#input", Input)
+        if self._history_index is None:
+            self._history_draft = input_box.value
+            self._history_index = len(self._input_history) - 1
+        else:
+            self._history_index += step
+
+        if self._history_index < 0:
+            self._history_index = 0
+        if self._history_index >= len(self._input_history):
+            self._history_index = None
+            value = self._history_draft
+        else:
+            value = self._input_history[self._history_index]
+        input_box.value = value
+        input_box.cursor_position = len(value)
 
     def _on_nickname_modal(self, nickname: Optional[str]) -> None:
         if nickname is not None:
@@ -302,7 +394,7 @@ class ChatApp(App):
         try:
             self.agent.run(text, on_delta=on_delta, on_tool_call=on_tool_call)
         except Exception as exc:
-            self.call_from_thread(self._append_stream, f"\n[red]错误: {exc}[/]")
+            self.call_from_thread(self._append_stream, f"\n**错误:** {exc}")
         finally:
             self.call_from_thread(self._finish_stream)
 

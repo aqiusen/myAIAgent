@@ -30,11 +30,18 @@
 本版本支持流式输出（边生成边打字），见 _one_call 里的 stream 分支。
 """
 from typing import List, Dict, Optional, Callable
+import time
 from openai import OpenAI
 
 from .guard import Guard, APPROVE, REJECT, CONFIRM
+from .errors import classify_error, retryable, ModelError
 
 MAX_ITERATIONS = 8  # 单次对话最多允许的模型-工具往返轮数，防死循环
+
+# 模型请求重试（参考 Suna runner.go 的 completeWithRecovery）
+MODEL_MAX_RETRIES = 3        # 最多重试 3 次
+MODEL_RETRY_DELAY = 8        # 每次重试间隔 8 秒（秒）
+MODEL_TIMEOUT = 60           # 单次请求超时（秒）
 
 
 class Runner:
@@ -57,7 +64,31 @@ class Runner:
         schemas: List[Dict],
         on_delta: Optional[Callable[[str], None]] = None,
     ) -> Dict:
-        """发一次请求，返回统一结构：{"content": str, "tool_calls": [..]}。
+        """发一次请求，带重试（参考 Suna 的 completeWithRecovery）。
+
+        只对【可重试错误】重试（网络抖动、限流、5xx），最多 MODEL_MAX_RETRIES 次。
+        参数错误、鉴权失败等不可重试错误直接抛出。
+        """
+        for attempt in range(1, MODEL_MAX_RETRIES + 2):  # 1 + 重试次数
+            try:
+                return self._do_call(messages, schemas, on_delta)
+            except Exception as exc:
+                err = classify_error(exc)
+                # 达到最大次数，或错误不可重试 → 抛出
+                if attempt >= MODEL_MAX_RETRIES + 1 or not retryable(err):
+                    raise
+                # 可重试：等待后重试
+                print(f"\n  [重试] 第{attempt}次失败 ({err.kind}), {MODEL_RETRY_DELAY}s 后重试...")
+                time.sleep(MODEL_RETRY_DELAY)
+        raise ModelError("unknown", "model request failed without an error")
+
+    def _do_call(
+        self,
+        messages: List[Dict],
+        schemas: List[Dict],
+        on_delta: Optional[Callable[[str], None]] = None,
+    ) -> Dict:
+        """发一次请求（不重试），返回统一结构：{"content": str, "tool_calls": [..]}。
 
         阶段 1.2 新增：支持流式。
           - 不传 on_delta → 非流式，一次性拿完整结果（老行为）。
@@ -76,6 +107,7 @@ class Runner:
             temperature=self.config.temperature,
             max_tokens=self.config.max_tokens,
             stream=stream,
+            timeout=MODEL_TIMEOUT,              # 单次请求超时保护
         )
 
         if not stream:

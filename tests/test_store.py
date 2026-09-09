@@ -4,7 +4,12 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from myagent.store import Store
+from myagent.store import Store, title_from_user_input
+
+
+def test_title_from_user_input():
+    assert title_from_user_input("  你好\n世界  ") == "你好 世界"
+    assert title_from_user_input("a" * 31) == ("a" * 30) + "..."
 
 
 def test_create_and_list_session(tmp_path):

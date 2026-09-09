@@ -15,6 +15,17 @@ from pathlib import Path
 from typing import List, Dict, Optional
 
 
+MAX_SESSION_TITLE_CHARS = 30
+
+
+def title_from_user_input(text: str) -> str:
+    """从用户输入生成会话标题。"""
+    title = " ".join(text.split())
+    if len(title) > MAX_SESSION_TITLE_CHARS:
+        title = title[:MAX_SESSION_TITLE_CHARS] + "..."
+    return title
+
+
 class Store:
     """SQLite 会话存储。
 

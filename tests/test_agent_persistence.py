@@ -18,12 +18,15 @@ def make_config(db_path):
     )
 
 
-def test_agent_creates_session(tmp_path):
+def test_agent_creates_session_on_first_message(tmp_path):
     c = make_config(str(tmp_path / "test.db"))
     a = Agent(c, confirm_callback=lambda p: False)
-    assert a.session_id is not None
     assert a.store is not None
-    # 会话已落库
+    assert a.session_id is None
+
+    a.memory.add_user("你好")
+    a.session_id = a.memory.session_id
+
     assert a.store.get_session(a.session_id) is not None
 
 
@@ -35,9 +38,20 @@ def test_agent_persists_messages(tmp_path):
     a.memory.add_tool("call_1", "date 输出")
 
     # 从 store 验证
-    msgs = a.store.load_messages(a.session_id)
+    msgs = a.store.load_messages(a.memory.session_id)
     assert len(msgs) == 3
     assert msgs[0]["role"] == "user"
+
+
+def test_agent_run_syncs_lazy_session_id(tmp_path):
+    c = make_config(str(tmp_path / "test.db"))
+    a = Agent(c, confirm_callback=lambda p: False)
+    a.runner.run = lambda messages, schemas, on_delta=None: "你好！"
+
+    a.run("你好")
+
+    assert a.session_id is not None
+    assert a.store.load_messages(a.session_id)[0]["content"] == "你好"
 
 
 def test_agent_reloads_session(tmp_path):
@@ -48,7 +62,7 @@ def test_agent_reloads_session(tmp_path):
     a.memory.add_assistant("你好！")
 
     # 重启
-    a2 = Agent(c, confirm_callback=lambda p: False, session_id=a.session_id)
+    a2 = Agent(c, confirm_callback=lambda p: False, session_id=a.memory.session_id)
     roles = [m["role"] for m in a2.memory._messages]
     assert "user" in roles
     assert "assistant" in roles

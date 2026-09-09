@@ -42,6 +42,16 @@ def _load_dotenv(path: Path = ENV_FILE) -> None:
             os.environ[key] = value
 
 
+def _db_path_from_env() -> str:
+    db_path = os.environ.get("MY_AGENT_DB_PATH", str(PROJECT_ROOT / "db" / "myagent.db"))
+    if not db_path:
+        return ""
+    path = Path(db_path)
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    return str(path)
+
+
 @dataclass
 class Config:
     """运行所需的一小撮配置。字段都有默认值，避免某处突然 KeyError。"""
@@ -108,7 +118,5 @@ class Config:
             guard_mode=os.environ.get("MY_AGENT_GUARD_MODE", "smart"),
             guard_audit_path=os.environ.get("MY_AGENT_GUARD_AUDIT", ""),
             max_tokens=int(os.environ.get("MY_AGENT_MAX_TOKENS", "8000")),
-            db_path=os.environ.get(
-                "MY_AGENT_DB_PATH", str(PROJECT_ROOT / "db" / "myagent.db")
-            ),
+            db_path=_db_path_from_env(),
         )

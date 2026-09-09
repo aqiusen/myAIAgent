@@ -40,12 +40,10 @@ class Agent:
     def __init__(self, config: Config, confirm_callback=None, session_id=None):
         self.config = config
 
-        # 可选持久化：建 Store，加载指定会话的历史
+        # 可选持久化：建 Store；新会话等第一条消息再落库，避免空会话。
         self.store = None
         if config.db_path:
             self.store = Store(config.db_path)
-            if session_id is None:
-                session_id = self.store.create_session()
         self.session_id = session_id
 
         self.memory = Memory(
@@ -84,6 +82,7 @@ class Agent:
         """
         # 1) 把用户输入写入历史
         self.memory.add_user(user_input)
+        self.session_id = self.memory.session_id
 
         # 2) 取裁剪后的消息列表跑核心循环
         messages = self.memory.snapshot()
@@ -92,4 +91,5 @@ class Agent:
 
         # 3) 把最终答案写回历史，供下一轮对话引用
         self.memory.add_assistant(answer)
+        self.session_id = self.memory.session_id
         return answer

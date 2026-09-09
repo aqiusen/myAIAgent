@@ -79,6 +79,22 @@ def test_persistence_integration(tmp_path):
     store.close()
 
 
+def test_user_message_updates_session_title(tmp_path):
+    """用户消息持久化时，用最新一条用户输入更新会话标题。"""
+    db = str(tmp_path / "test.db")
+    store = Store(db)
+    sid = store.create_session()
+
+    m = Memory(store=store, session_id=sid)
+    m.add_user("第一句话")
+    assert store.get_session(sid)["title"] == "第一句话"
+
+    m.add_assistant("回复")
+    m.add_user("第二句话")
+    assert store.get_session(sid)["title"] == "第二句话"
+    store.close()
+
+
 def test_system_prompt_not_persisted(tmp_path):
     """系统提示词不应持久化（重启会重复）。"""
     db = str(tmp_path / "test.db")

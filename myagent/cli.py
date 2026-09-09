@@ -9,26 +9,30 @@
 （为什么升级，见 docs/prompt_toolkit使用原因.md 与 docs/Textual界面.md）
 """
 import sys
+from typing import Optional
 
 from .config import Config
 from .agent import Agent
-from .store import Store
+from .store import Store, title_from_user_input
 from .tui import run_tui
 
 
-def _pick_session(config: Config) -> str:
-    """选择或创建会话。返回 session_id。"""
+def _pick_session(config: Config) -> Optional[str]:
+    """选择已有会话；新会话返回 None，等第一条消息再创建。"""
     store = Store(config.db_path)
-    sessions = store.list_sessions()
+    sessions = []
+    for session in store.list_sessions():
+        messages = store.load_messages(session["id"])
+        if messages:
+            sessions.append((session, messages))
     if not sessions:
-        sid = store.create_session()
-        print(f"已创建新会话。")
-        return sid
+        print("暂无历史会话，将在发送第一条消息后保存。")
+        return None
 
     print("\n=== 已有会话 ===")
-    for i, s in enumerate(sessions, 1):
-        title = s["title"] or "(无标题)"
-        print(f"  {i}. {title}  ({len(store.load_messages(s['id']))} 条消息)")
+    for i, (s, messages) in enumerate(sessions, 1):
+        title = s["title"] or _title_from_messages(messages) or "(无标题)"
+        print(f"  {i}. {title}  ({len(messages)} 条消息)")
     print(f"  {len(sessions)+1}. 新建会话")
 
     while True:
@@ -40,10 +44,17 @@ def _pick_session(config: Config) -> str:
         if choice.isdigit():
             n = int(choice)
             if 1 <= n <= len(sessions):
-                return sessions[n - 1]["id"]
+                return sessions[n - 1][0]["id"]
             if n == len(sessions) + 1:
-                return store.create_session()
+                return None
         print("无效选择，请重试。")
+
+
+def _title_from_messages(messages) -> str:
+    for msg in reversed(messages):
+        if msg.get("role") == "user":
+            return title_from_user_input(msg.get("content", ""))
+    return ""
 
 
 def main() -> None:
