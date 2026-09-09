@@ -305,7 +305,7 @@ class Guard:
 
     def _is_readonly_call(self, tool: str, params: Dict) -> bool:
         """静态判定调用是否可证明无副作用。无法证明 → 非只读。"""
-        if tool in ("read_file", "list_dir"):
+        if tool in ("read_file", "list_dir", "search", "read_image"):
             return True
         if tool == "run_command":
             return _is_readonly_command(params.get("command", ""))
