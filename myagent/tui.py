@@ -191,6 +191,28 @@ class ChatApp(App):
     def on_mount(self) -> None:
         self.query_one("#input").focus()
         self._add_message("myAIAgent", "已启动。输入 /setting 设置昵称，输入 /q 或 /quit 退出。", "system-row")
+        # 若恢复了历史会话，把已加载的上下文渲染出来
+        self._render_history()
+
+    def _render_history(self) -> None:
+        """启动时把 agent 内存里已加载的历史消息渲染到聊天区。"""
+        msgs = getattr(self.agent, "memory", None)
+        msgs = getattr(msgs, "_messages", None) if msgs else None
+        if not msgs:
+            return
+        for m in msgs:
+            role = m.get("role")
+            content = m.get("content", "")
+            if role == "system":
+                continue  # 系统提示词是内部配置，不显示
+            if role == "user":
+                self._add_message(self.nickname, content, "user-row")
+            elif role == "assistant":
+                self._add_message("AI", content, "agent-row")
+            elif role == "tool":
+                # 工具结果作为工具消息居中显示（截断长内容）
+                short = content if len(content) <= 80 else content[:77] + "..."
+                self._add_message("工具", short, "tool-row")
 
     # ---------- 消息渲染 ----------
     def _add_message(self, sender: str, text: str, row_cls: str) -> None:
