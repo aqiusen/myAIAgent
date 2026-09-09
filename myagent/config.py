@@ -56,6 +56,9 @@ class Config:
 
     # ---------- 记忆 / 上下文 ----------
     max_history: int = 20  # 裁剪前最多保留多少条用户/助手消息（见 memory.py）
+    max_tokens: int = 8000  # 上下文 token 预算，超过则裁剪旧消息
+    # 会话持久化 DB 路径（空则不持久化）
+    db_path: str = ""
 
     # ---------- 安全 Guard ----------
     # 模式：readonly / ask / auto / smart（见 guard.py）
@@ -104,4 +107,6 @@ class Config:
             api_key=api_key,
             guard_mode=os.environ.get("MY_AGENT_GUARD_MODE", "smart"),
             guard_audit_path=os.environ.get("MY_AGENT_GUARD_AUDIT", ""),
+            max_tokens=int(os.environ.get("MY_AGENT_MAX_TOKENS", "8000")),
+            db_path=os.environ.get("MY_AGENT_DB_PATH", ""),
         )

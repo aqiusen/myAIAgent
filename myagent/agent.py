@@ -12,6 +12,7 @@ from .config import Config
 from .memory import Memory
 from .runner import Runner
 from .guard import Guard, build_guard
+from .store import Store
 from . import tools
 
 
@@ -36,9 +37,26 @@ def _default_llm_reviewer(client, model: str):
 
 
 class Agent:
-    def __init__(self, config: Config, confirm_callback=None):
+    def __init__(self, config: Config, confirm_callback=None, session_id=None):
         self.config = config
-        self.memory = Memory(max_history=config.max_history)
+
+        # 可选持久化：建 Store，加载指定会话的历史
+        self.store = None
+        if config.db_path:
+            self.store = Store(config.db_path)
+            if session_id is None:
+                session_id = self.store.create_session()
+        self.session_id = session_id
+
+        self.memory = Memory(
+            max_history=config.max_history,
+            max_tokens=config.max_tokens,
+            store=self.store,
+            session_id=session_id,
+        )
+        # 若指定了已有会话，加载其历史（不含系统提示词）
+        if session_id is not None and self.store is not None:
+            self.memory.load_from_store(session_id)
 
         # 先建 Runner（它持有模型客户端），再建 Guard 复用其客户端。
         self.runner = Runner(config)
