@@ -322,6 +322,14 @@ class ChatApp(App):
             self.query_one("#input").clear()
             self._set_nickname(text.removeprefix("/setting ").strip())
             return
+        if text == "/model":
+            self.query_one("#input").clear()
+            self._show_models()
+            return
+        if text.startswith("/model "):
+            self.query_one("#input").clear()
+            self._switch_model(text.removeprefix("/model ").strip())
+            return
         self.query_one("#input").clear()
         self._remember_input(text)
         self._add_message("你", text, "user-row")
@@ -382,6 +390,24 @@ class ChatApp(App):
             return
         self.nickname = nickname
         self._add_message("系统", f"昵称已设置为：{nickname}", "system-row")
+
+    def _show_models(self) -> None:
+        """显示当前模型和可用模型。"""
+        current = self.agent.current_model()
+        models = self.agent.list_models()
+        lines = [f"当前模型: {current}", "可用模型:"]
+        for m in models:
+            mark = "*" if m == current else " "
+            lines.append(f"  {mark} {m}")
+        self._add_message("系统", "\n".join(lines), "system-row")
+
+    def _switch_model(self, ref: str) -> None:
+        """切换到指定模型。"""
+        try:
+            self.agent.switch_model(ref)
+            self._add_message("系统", f"已切换到模型: {ref}", "system-row")
+        except KeyError as exc:
+            self._add_message("系统", str(exc), "system-row")
 
     @work(thread=True)
     def _run_agent(self, text: str) -> None:

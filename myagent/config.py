@@ -32,19 +32,42 @@ def _load_dotenv(path: Path = ENV_FILE) -> None:
       - 已存在的环境变量优先，不覆盖（这样 shell 里 export 的仍生效）。
       - 忽略空行和以 # 开头的注释行。
       - 值两端的引号会被去掉。
+      - 支持多行值（以 [ 或 { 开头、跨多行的 JSON）。
     不引入 python-dotenv，保持依赖极简（与项目选型一致）。
     """
     if not path.exists():
         return
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
+    lines = path.read_text(encoding="utf-8").splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        i += 1
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
         key = key.strip()
+        value = value.strip()
+        # 多行值：以 [ 或 { 开头且未闭合，继续拼接后续行
+        if value.startswith(("[", "{")) and not _is_balanced(value):
+            while i < len(lines):
+                value += "\n" + lines[i].strip()
+                i += 1
+                if _is_balanced(value):
+                    break
         value = value.strip().strip('"').strip("'")
         if key and key not in os.environ:
             os.environ[key] = value
+
+
+def _is_balanced(s: str) -> bool:
+    """粗略判断方括号/花括号是否闭合（用于多行值拼接）。"""
+    depth = 0
+    for ch in s:
+        if ch in "[{":
+            depth += 1
+        elif ch in "]}":
+            depth -= 1
+    return depth <= 0
 
 
 def _db_path_from_env() -> str:

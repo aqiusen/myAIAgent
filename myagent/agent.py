@@ -90,6 +90,32 @@ class Agent:
         # 每段会话开始时，先把系统提示词准备好
         self.memory.add_system(config.system_prompt)
 
+    # ---------- 模型切换 ----------
+    def list_models(self) -> list:
+        """列出所有可用模型 ref。"""
+        return self.registry.list_models()
+
+    def current_model(self) -> str:
+        """返回当前模型 ref。"""
+        return self.model_ref
+
+    def switch_model(self, ref: str) -> str:
+        """运行时切换模型（对应 Suna 的 Router.Bind）。
+
+        切换后：
+          - Runner 的 Provider 换成新模型的
+          - smart 模式的 LLM 审查器也换成新模型的
+        """
+        if not self.registry.has(ref):
+            raise KeyError(f"模型不存在: {ref}，可用: {self.list_models()}")
+        provider = self.registry.get_provider(ref)
+        self.runner.provider = provider
+        # smart 模式：LLM 审查器跟着换
+        if self.guard.mode == "smart":
+            self.guard.llm_reviewer = _default_llm_reviewer(provider, self.registry.get_config(ref).model)
+        self.model_ref = ref
+        return ref
+
     def run(self, user_input: str, on_delta=None, on_tool_call=None) -> str:
         """接收用户一句话，返回 agent 的最终文字回答。
 
