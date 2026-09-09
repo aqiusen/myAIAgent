@@ -69,3 +69,33 @@ def test_update_session_title(tmp_path):
     s.update_session_title(sid, "新标题")
     assert s.get_session(sid)["title"] == "新标题"
     s.close()
+
+
+def test_thread_safe_cross_thread_access(tmp_path):
+    """跨线程访问 Store 不应报 SQLite 线程错误。"""
+    import threading
+
+    db = str(tmp_path / "test.db")
+    s = Store(db)  # 主线程创建
+    sid = s.create_session()
+
+    errors = []
+
+    def worker():
+        try:
+            for i in range(20):
+                s.save_message(sid, "user", f"消息{i}")
+            s.load_messages(sid)
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker) for _ in range(3)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors, f"跨线程访问报错: {errors}"
+    # 3 个线程各存 20 条 = 60 条
+    assert len(s.load_messages(sid)) == 60
+    s.close()
