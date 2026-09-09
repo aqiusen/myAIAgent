@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import List
 
 from .model_registry import ModelConfig
+from .mcp import MCPClient
 
 
 # 项目根目录（config.py 位于 myagent/ 下，上一级即根目录）
@@ -67,6 +68,9 @@ class Config:
 
     # 多模型配置（对应 Suna 的 Router）。第一个是主模型，其余来自 MY_AGENT_MODELS。
     models: List[ModelConfig] = field(default_factory=list)
+
+    # MCP 服务器配置（对应 Suna 的 MCP）。来自 MY_AGENT_MCP_SERVERS。
+    mcp_servers: List[MCPClient] = field(default_factory=list)
 
     temperature: float = 0.7   # 温度：越低越确定，越高越有创造力
     max_tokens: int = 1024     # 单次生成上限，防止模型话痨烧钱
@@ -148,11 +152,31 @@ class Config:
             except (json.JSONDecodeError, ValueError) as exc:
                 raise RuntimeError(f"MY_AGENT_MODELS 解析失败: {exc}")
 
+        # MCP 服务器：MY_AGENT_MCP_SERVERS 是 JSON 数组，如
+        #   [{"id":"fs","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","/tmp"]}]
+        mcp_servers = []
+        mcp_raw = os.environ.get("MY_AGENT_MCP_SERVERS", "")
+        if mcp_raw.strip():
+            try:
+                for item in json.loads(mcp_raw):
+                    mcp_servers.append(
+                        MCPClient(
+                            server_id=item.get("id", ""),
+                            command=item.get("command", ""),
+                            args=item.get("args", []),
+                            cwd=item.get("cwd"),
+                            env=item.get("env"),
+                        )
+                    )
+            except (json.JSONDecodeError, ValueError) as exc:
+                raise RuntimeError(f"MY_AGENT_MCP_SERVERS 解析失败: {exc}")
+
         return cls(
             model=model,
             base_url=base_url,
             api_key=api_key,
             models=models,
+            mcp_servers=mcp_servers,
             guard_mode=os.environ.get("MY_AGENT_GUARD_MODE", "smart"),
             guard_audit_path=os.environ.get("MY_AGENT_GUARD_AUDIT", ""),
             max_tokens=int(os.environ.get("MY_AGENT_MAX_TOKENS", "8000")),

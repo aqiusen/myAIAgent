@@ -14,6 +14,7 @@ from .runner import Runner
 from .guard import Guard, build_guard
 from .store import Store
 from .model_registry import ModelRegistry
+from .tools.mcp_provider import MCPToolProvider
 from . import tools
 
 
@@ -61,9 +62,20 @@ class Agent:
         if session_id is not None and self.store is not None:
             self.memory.load_from_store(session_id)
 
+        # 工具：内置工具 + MCP 工具（对应 Suna 的 tools 目录）
+        self.mcp_provider = None
+        if config.mcp_servers:
+            self.mcp_provider = MCPToolProvider(config.mcp_servers)
+            mcp_tools = self.mcp_provider.load()
+            self.tools_list = tools.TOOLS + mcp_tools
+        else:
+            self.tools_list = tools.TOOLS
+        self.schemas = [t.schema for t in self.tools_list]  # 工具声明（只给模型看的那份）
+
         # 先建 Runner（它持有模型 Provider），再建 Guard 复用其客户端。
         provider = self.registry.get_provider(model_ref)
         self.runner = Runner(config, provider=provider)
+        self.runner.tools_list = self.tools_list
 
         # 创建 Guard（参考 Suna internal/guard）
         audit_path = config.guard_audit_path or None
@@ -75,9 +87,8 @@ class Agent:
         self.runner.guard = guard
         self.runner.confirm_callback = confirm_callback
 
-        # 每段会话开始时，先把系统提示词 + 工具声明准备好
+        # 每段会话开始时，先把系统提示词准备好
         self.memory.add_system(config.system_prompt)
-        self.schemas = tools.SCHEMAS  # 工具声明（只给模型看的那份）
 
     def run(self, user_input: str, on_delta=None, on_tool_call=None) -> str:
         """接收用户一句话，返回 agent 的最终文字回答。

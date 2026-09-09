@@ -69,6 +69,8 @@ class Runner:
         self.confirm_callback = confirm_callback
         # tool_callback(name, args) -> None：工具调用时回调（TUI 用它展示工具调用）。
         self.tool_callback = None
+        # 完整工具列表（内置 + MCP），供 _dispatch 查找。
+        self.tools_list: List = []
 
     def _one_call(
         self,
@@ -154,11 +156,10 @@ class Runner:
             # 没有工具调用 → 模型给的就是最终答案
             return content
 
-    # 工具执行路由：解析模型给的工具调用，先过 Guard，再调到 builtin 里的执行函数
+    # 工具执行路由：解析模型给的工具调用，先过 Guard，再调到对应工具的执行函数
     def _dispatch(self, tc: Dict) -> str:
-        from . import tools
         name = tc["function"]["name"]
-        tool = tools.tool_for(name)
+        tool = self._find_tool(name)
         if tool is None:
             return f"未找到工具: {name}"
         # arguments 是模型生成的 JSON 字符串，解析成关键字参数
@@ -181,3 +182,10 @@ class Runner:
                 return f"[Guard 拒绝] 用户未确认该操作"
 
         return tool.run(**kwargs)
+
+    def _find_tool(self, name: str):
+        """在完整工具列表（内置 + MCP）里按名字查找工具。"""
+        for tool in self.tools_list:
+            if tool.name == name:
+                return tool
+        return None
