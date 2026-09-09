@@ -60,6 +60,15 @@ cp .env.example .env
 > 说明：`.env` 含密钥，已被 `.gitignore` 忽略，不会提交到仓库。
 > 也可以不建 `.env`，改用 `export` 环境变量（环境变量优先于 `.env`）。
 
+## 运行测试
+
+```bash
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python -m pytest tests/ -v
+```
+
+覆盖：Store 持久化、Memory token 裁剪、Guard 安全审查、Agent 持久化集成、流式输出。
+
 ## 推荐阅读顺序
 
 1. `docs/core-loop.md` —— 理解 agent 的心脏（模型-工具循环）
