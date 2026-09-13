@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from rich.console import Console
 from textual.widgets import Input
 
-from myagent.tui import BubbleMarkdown, ChatApp
+from myagent.tui import BubbleMarkdown, ChatApp, ModelModal, NicknameModal
 
 
 def test_agent_markdown_keeps_content_sized_measurement():
@@ -50,5 +50,54 @@ def test_input_history_uses_loaded_user_messages():
             assert input_box.value == "第二句"
             await pilot.press("down")
             assert input_box.value == ""
+
+    asyncio.run(run())
+
+
+def test_model_modal_switches_with_keyboard():
+    async def run():
+        modal = ModelModal(["default", "vision"], "default")
+        app = ChatApp(SimpleNamespace(memory=SimpleNamespace(_messages=[])))
+        async with app.run_test() as pilot:
+            app.push_screen(modal)
+            await pilot.pause()
+            assert modal.focused.id == "model-choice-0"
+            await pilot.press("down")
+            assert modal.focused.id == "model-choice-1"
+
+    asyncio.run(run())
+
+
+def test_model_modal_result_switches_agent():
+    async def run():
+        switched = []
+        agent = SimpleNamespace(
+            memory=SimpleNamespace(_messages=[]),
+            switch_model=switched.append,
+        )
+        app = ChatApp(agent)
+        async with app.run_test():
+            app._on_model_modal("vision")
+            assert switched == ["vision"]
+
+    asyncio.run(run())
+
+
+def test_nickname_modal_submit_is_not_sent_as_chat_message():
+    async def run():
+        sent = []
+        agent = SimpleNamespace(
+            memory=SimpleNamespace(_messages=[]),
+            run=lambda text, **kwargs: sent.append(text) or "",
+        )
+        app = ChatApp(agent)
+        async with app.run_test() as pilot:
+            app.push_screen(NicknameModal("我"))
+            await pilot.pause()
+            name_input = app.screen.query_one("#setting-name", Input)
+            name_input.value = "介绍下你自己"
+            await pilot.press("enter")
+            await pilot.pause()
+            assert sent == []
 
     asyncio.run(run())

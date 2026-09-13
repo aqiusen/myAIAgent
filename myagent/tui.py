@@ -125,6 +125,95 @@ class NicknameModal(ModalScreen[Optional[str]]):
         self.dismiss(self.query_one("#setting-name", Input).value.strip())
 
 
+class ModelModal(ModalScreen[Optional[str]]):
+    """选择运行时模型的弹窗。"""
+
+    CSS = """
+    ModelModal {
+        align: center middle;
+    }
+    #model-panel {
+        width: 44;
+        height: auto;
+        max-height: 18;
+        padding: 1 2;
+        border: round $primary;
+        background: $surface;
+    }
+    #model-title {
+        width: 100%;
+        height: 1;
+        margin-bottom: 1;
+        text-style: bold;
+        color: $primary;
+    }
+    #model-current {
+        width: 100%;
+        height: 1;
+        margin-bottom: 1;
+        color: $text-muted;
+    }
+    .model-choice {
+        width: 100%;
+        margin-bottom: 1;
+    }
+    .current-model {
+        border: round $success;
+    }
+    #model-cancel {
+        width: 100%;
+        margin-top: 1;
+    }
+    """
+
+    BINDINGS = [("escape", "dismiss")]
+
+    def __init__(self, models: list[str], current: str):
+        super().__init__()
+        self.models = models
+        self.current = current
+        self._selected_index = models.index(current) if current in models else 0
+
+    def compose(self) -> ComposeResult:
+        yield Vertical(
+            Label("切换模型", id="model-title"),
+            Label(f"当前模型：{self.current}", id="model-current"),
+            *(
+                Button(
+                    f"{ref}{'  (当前)' if ref == self.current else ''}",
+                    id=f"model-choice-{index}",
+                    classes="model-choice current-model" if ref == self.current else "model-choice",
+                )
+                for index, ref in enumerate(self.models)
+            ),
+            Button("取消", id="model-cancel"),
+            id="model-panel",
+        )
+
+    def on_mount(self) -> None:
+        self._focus_selected()
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key not in {"up", "down"} or not self.models:
+            return
+        event.stop()
+        event.prevent_default()
+        self._selected_index = (
+            self._selected_index + (-1 if event.key == "up" else 1)
+        ) % len(self.models)
+        self._focus_selected()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "model-cancel":
+            self.dismiss(None)
+            return
+        index = int(event.button.id.removeprefix("model-choice-"))
+        self.dismiss(self.models[index])
+
+    def _focus_selected(self) -> None:
+        self.query_one(f"#model-choice-{self._selected_index}", Button).focus()
+
+
 class ChatApp(App):
     """myAIAgent 的聊天界面。"""
 
@@ -230,7 +319,11 @@ class ChatApp(App):
 
     def on_mount(self) -> None:
         self.query_one("#input").focus()
-        self._add_message("myAIAgent", "已启动。输入 /setting 设置昵称，输入 /q 或 /quit 退出。", "system-row")
+        self._add_message(
+            "myAIAgent",
+            "已启动。输入 /model 切换模型，/setting 设置昵称，/q 或 /quit 退出。",
+            "system-row",
+        )
         # 若恢复了历史会话，把已加载的上下文渲染出来
         self._render_history()
 
@@ -308,6 +401,9 @@ class ChatApp(App):
 
     # ---------- 交互 ----------
     def on_input_submitted(self, event: Input.Submitted) -> None:
+        # ModalScreen 里的 Input.Submitted 也会冒泡到 App；只处理聊天主输入框。
+        if event.input.id != "input":
+            return
         text = event.value.strip()
         if not text:
             return
@@ -324,7 +420,7 @@ class ChatApp(App):
             return
         if text == "/model":
             self.query_one("#input").clear()
-            self._show_models()
+            self._open_model_modal()
             return
         if text.startswith("/model "):
             self.query_one("#input").clear()
@@ -391,15 +487,17 @@ class ChatApp(App):
         self.nickname = nickname
         self._add_message("系统", f"昵称已设置为：{nickname}", "system-row")
 
-    def _show_models(self) -> None:
-        """显示当前模型和可用模型。"""
-        current = self.agent.current_model()
-        models = self.agent.list_models()
-        lines = [f"当前模型: {current}", "可用模型:"]
-        for m in models:
-            mark = "*" if m == current else " "
-            lines.append(f"  {mark} {m}")
-        self._add_message("系统", "\n".join(lines), "system-row")
+    def _open_model_modal(self) -> None:
+        """打开模型选择器。"""
+        self.push_screen(
+            ModelModal(self.agent.list_models(), self.agent.current_model()),
+            self._on_model_modal,
+        )
+
+    def _on_model_modal(self, ref: Optional[str]) -> None:
+        if ref is not None:
+            self._switch_model(ref)
+        self.query_one("#input").focus()
 
     def _switch_model(self, ref: str) -> None:
         """切换到指定模型。"""

@@ -71,11 +71,12 @@ cp .env.example .env
 
 ## 推荐阅读顺序
 
-1. `docs/core-loop.md` —— 理解 agent 的心脏（模型-工具循环）
-2. `docs/architecture.md` —— 理解为什么分层
-3. 读 `myagent/` 代码（都有详细注释）
-4. `docs/tech-decisions.md` —— 理解选型背后的为什么
-5. `docs/roadmap.md` —— 想继续深入时按它扩展
+1. `docs/progress.md` —— 当前进度：做到哪了、下一步做什么（每次回来先看）
+2. `docs/core-loop.md` —— 理解 agent 的心脏（模型-工具循环）
+3. `docs/architecture.md` —— 理解为什么分层
+4. 读 `myagent/` 代码（都有详细注释）
+5. `docs/tech-decisions.md` —— 理解选型背后的为什么
+6. `docs/master-roadmap.md` —— 完整 9 阶段规划；进度以 progress.md 为准
 
 ## 安全提示
 
