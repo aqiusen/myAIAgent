@@ -34,6 +34,9 @@ from .skill import (
 )
 from . import tools
 
+# 行首 / 这些是 TUI 命令，不当成 Skill 激活。
+_RESERVED_SLASH = {"q", "quit", "setting", "model", "skills"}
+
 
 # smart 模式默认的 LLM 审查器：用同一个模型判断命令是否危险。
 # 审风险不审意图：只判断操作本身是否危险，不判断是否符合用户意图。
@@ -237,8 +240,11 @@ class Agent:
         return ranked[0]["name"] if ranked else ""
 
     def load_mentioned_skills(self, text: str) -> tuple:
-        """解析 `$name`，加载正文。返回 ([(name, content), ...], [error, ...])。"""
+        """解析 `$name` 或行首 `/name`（保留命令除外），加载正文。"""
         mentions = re.findall(r"\$([A-Za-z0-9._-]+)", text or "")
+        slash = re.match(r"^/([A-Za-z0-9._-]+)(?:\s|$)", text or "")
+        if slash and slash.group(1) not in _RESERVED_SLASH:
+            mentions.insert(0, slash.group(1))
         loaded = []
         errors = []
         seen = set()
@@ -260,8 +266,12 @@ class Agent:
 
     @staticmethod
     def strip_skill_mentions(text: str) -> str:
-        """从用户可见请求里去掉 $skill，只留下真正要做的事。"""
-        return re.sub(r"\$[A-Za-z0-9._-]+", "", text or "").strip()
+        """从用户可见请求里去掉 $skill 和行首 /skill，只留下真正要做的事。"""
+        text = re.sub(r"\$[A-Za-z0-9._-]+", "", text or "")
+        slash = re.match(r"^/([A-Za-z0-9._-]+)(\s+|$)", text)
+        if slash and slash.group(1) not in _RESERVED_SLASH:
+            text = text[slash.end():]
+        return text.strip()
 
     def import_user_skills(self) -> list:
         """从用户主目录再扫一遍，把还没有的 Skill 拷进本 agent。
@@ -322,7 +332,10 @@ class Agent:
             self.skills.root,
         )
         extra = (
-            "\n\nTo load a Skill's full instructions, call `skill_load` with "
+            "Complete the user's task. If an operation fails, inspect the cause and adjust. "
+            "If the repo has no match, look it up with `http` before concluding. "
+            "Analyze commands against evidence (docs or source), not generic tips.\n"
+            "To load a Skill's full instructions, call `skill_load` with "
             "name and scope=global. Do not list_dir or read_file the skills/ "
             "directory to activate a Skill.\n"
             "After creating or importing a global Skill, use `skill_start`; "

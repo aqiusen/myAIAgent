@@ -16,8 +16,10 @@ import time
 from typing import List, Optional
 
 from rich.cells import cell_len
+from rich.highlighter import Highlighter
 from rich.markdown import Markdown
 from rich.measure import Measurement
+from rich.text import Text
 from textual import events, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -27,7 +29,18 @@ from textual.widgets import Button, Header, Footer, Input, Label, OptionList, St
 from textual.widgets.option_list import Option
 
 from .agent import Agent
-from .skill import rank_skills
+from .skill import fuzzy_match, highlight_fuzzy, rank_skills
+
+_SLASH_TOKEN = re.compile(r"(/[A-Za-z0-9._-]+|\$[A-Za-z0-9._-]+)")
+_SLASH_STYLE = "bold #3b82f6"
+
+
+class SlashHighlighter(Highlighter):
+    """把输入框和气泡里的 /skill、$skill 标蓝（对照 Grok 斜杠命令）。"""
+
+    def highlight(self, text: Text) -> None:
+        for match in _SLASH_TOKEN.finditer(text.plain):
+            text.stylize(_SLASH_STYLE, match.start(), match.end())
 
 
 LINK_RE = re.compile(r"!\[([^\]]*)\]\([^)]+\)|\[([^\]]+)\]\([^)]+\)")
@@ -428,8 +441,24 @@ class ChatApp(App):
         padding: 1 2;
         background: $surface;
     }
-    #input {
+    #composer {
         dock: bottom;
+        height: auto;
+        background: $surface;
+    }
+    #slash-panel {
+        height: auto;
+        max-height: 12;
+        margin: 0 2;
+        padding: 0 1;
+        border: round $primary;
+        background: $boost;
+        display: none;
+    }
+    #slash-panel.-open {
+        display: block;
+    }
+    #input {
         margin: 1 2;
         padding: 1 1;
         height: 3;
@@ -483,7 +512,10 @@ class ChatApp(App):
     .user-row .bubble {
         background: transparent;
         border: round $warning;
-        color: $warning;
+        color: $text;
+    }
+    #input {
+        color: $text;
     }
     .agent-row .bubble {
         background: $surface-lighten-1;
@@ -519,12 +551,20 @@ class ChatApp(App):
         self._status_timer = None
         self._busy_widget = None
         self._busy_row = None
+        self._slash_hits: list[dict] = []
+        self._slash_index = 0
 
     # ---------- 界面搭建 ----------
     def compose(self) -> ComposeResult:
         yield Header()
         yield VerticalScroll(id="chat")
-        yield Input(id="input")
+        with Vertical(id="composer"):
+            yield Static(id="slash-panel")
+            yield Input(
+                placeholder="输入 / 搜索 Skill 或命令",
+                highlighter=SlashHighlighter(),
+                id="input",
+            )
         yield Footer()
 
     def on_mount(self) -> None:
@@ -594,7 +634,11 @@ class ChatApp(App):
 
     @staticmethod
     def _chat_renderable(text: str, row_cls: str):
-        return BubbleMarkdown(text) if row_cls == "agent-row" else text
+        if row_cls == "agent-row":
+            return BubbleMarkdown(text)
+        renderable = Text(text)
+        SlashHighlighter().highlight(renderable)
+        return renderable
 
     def _add_tool_call(self, name: str, args: str) -> None:
         """工具调用：居中显示为系统消息。"""
@@ -679,11 +723,96 @@ class ChatApp(App):
         self._finish_stream()
         self._clear_busy()
 
-    # ---------- 交互 ----------
+    # ---------- / 补全（对照 Grok / Codex：输入 / 模糊出 Skill，匹配字标蓝）----------
+    _SLASH_COMMANDS = (
+        {"name": "skills", "description": "搜索并查看 Skill", "kind": "command"},
+        {"name": "model", "description": "切换模型", "kind": "command"},
+        {"name": "setting", "description": "设置昵称", "kind": "command"},
+        {"name": "quit", "description": "退出", "kind": "command"},
+    )
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "input":
+            return
+        self._sync_slash(event.value)
+
+    def _sync_slash(self, value: str) -> None:
+        if not value.startswith("/") or " " in value:
+            self._hide_slash()
+            return
+        query = value[1:]
+        self._slash_hits = self._slash_candidates(query)[:8]
+        self._slash_index = 0
+        if not self._slash_hits:
+            self._hide_slash()
+            return
+        self._render_slash(query)
+        panel = self.query_one("#slash-panel", Static)
+        panel.add_class("-open")
+
+    def _slash_candidates(self, query: str) -> list[dict]:
+        items = []
+        for cmd in self._SLASH_COMMANDS:
+            hit = fuzzy_match(cmd["name"], query) if query else ([], 0)
+            if query and hit is None:
+                continue
+            items.append({**cmd, "_rank": (0, hit[1] if hit else 0, cmd["name"])})
+        lister = getattr(self.agent, "list_skill_infos", None)
+        skills = lister() if callable(lister) else []
+        for skill in rank_skills(skills, query):
+            name = skill.get("name") or ""
+            items.append({
+                "name": name,
+                "description": skill.get("description") or "",
+                "kind": "skill",
+                "_rank": (1, 0, name.lower()),
+            })
+        items.sort(key=lambda item: item["_rank"])
+        return items
+
+    def _render_slash(self, query: str) -> None:
+        lines = []
+        for i, item in enumerate(self._slash_hits):
+            name = highlight_fuzzy(item["name"], query)
+            desc = (item.get("description") or "").replace("[", r"\[")
+            if len(desc) > 42:
+                desc = desc[:39] + "..."
+            tag = "命令" if item["kind"] == "command" else "Skill"
+            prefix = "> " if i == self._slash_index else "  "
+            line = f"{prefix}/{name}  [dim]{desc}[/]  [dim]{tag}[/]"
+            if i == self._slash_index:
+                line = f"[reverse]{line}[/]"
+            lines.append(line)
+        self.query_one("#slash-panel", Static).update("\n".join(lines))
+
+    def _hide_slash(self) -> None:
+        self._slash_hits = []
+        self._slash_index = 0
+        panel = self.query_one("#slash-panel", Static)
+        panel.remove_class("-open")
+        panel.update("")
+
+    def _accept_slash(self) -> None:
+        if not self._slash_hits:
+            return
+        item = self._slash_hits[self._slash_index]
+        box = self.query_one("#input", Input)
+        box.value = f"/{item['name']} "
+        box.cursor_position = len(box.value)
+        self._hide_slash()
+        box.focus()
+
     def on_input_submitted(self, event: Input.Submitted) -> None:
         # ModalScreen 里的 Input.Submitted 也会冒泡到 App；只处理聊天主输入框。
         if event.input.id != "input":
             return
+        if self._slash_hits:
+            item = self._slash_hits[self._slash_index]
+            typed = event.value.strip().lstrip("/")
+            if typed != item["name"]:
+                self._accept_slash()
+                return
+            self._hide_slash()
         text = event.value.strip()
         if not text:
             return
@@ -746,9 +875,26 @@ class ChatApp(App):
         self._run_agent(text)
 
     def on_key(self, event: events.Key) -> None:
-        if event.key not in {"up", "down"}:
-            return
         if isinstance(self.screen, ModalScreen):
+            return
+        if self._slash_hits:
+            if event.key == "escape":
+                event.stop()
+                event.prevent_default()
+                self._hide_slash()
+                return
+            if event.key in {"up", "down", "tab"}:
+                event.stop()
+                event.prevent_default()
+                if event.key == "tab":
+                    self._accept_slash()
+                    return
+                delta = -1 if event.key == "up" else 1
+                self._slash_index = (self._slash_index + delta) % len(self._slash_hits)
+                query = self.query_one("#input", Input).value[1:]
+                self._render_slash(query)
+                return
+        if event.key not in {"up", "down"}:
             return
         input_box = self.query_one("#input", Input)
         if not input_box.has_focus:

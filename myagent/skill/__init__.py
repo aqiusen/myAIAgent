@@ -3,7 +3,7 @@
 Skill 是「可复用工作方法」：一个目录 + SKILL.md。
 模型平时只看到短描述；需要完整指令时调用 skill_load。
 """
-from .fuzzy import fuzzy_match, rank_skills
+from .fuzzy import fuzzy_match, highlight_fuzzy, rank_skills
 from .catalog import (
     SCOPE_GLOBAL,
     SCOPE_PROJECT,
@@ -46,6 +46,7 @@ __all__ = [
     "discover_project",
     "discover_user",
     "fuzzy_match",
+    "highlight_fuzzy",
     "rank_skills",
     "render_summary",
     "sync_user_skills",

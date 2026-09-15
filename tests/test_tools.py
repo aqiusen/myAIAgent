@@ -7,6 +7,46 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from myagent.tools import TOOLS, tool_for
 
 
+def test_runner_forces_wrapup_after_max_iterations():
+    from myagent.config import Config
+    from myagent.model_registry import ModelConfig
+    from myagent.runner import MAX_ITERATIONS, Runner
+    from myagent.tools.base import Tool
+
+    class FakeProvider:
+        def __init__(self):
+            self.with_tools = 0
+            self.without_tools = 0
+
+        def complete(self, messages, tools, temperature, max_tokens, stream, on_delta=None):
+            if tools:
+                self.with_tools += 1
+                return {
+                    "content": "",
+                    "tool_calls": [{
+                        "id": f"c{self.with_tools}",
+                        "type": "function",
+                        "function": {"name": "noop", "arguments": "{}"},
+                    }],
+                }
+            self.without_tools += 1
+            return {"content": "wrap-up answer", "tool_calls": []}
+
+    config = Config(
+        model="m", base_url="http://x", api_key="k",
+        models=[ModelConfig(ref="default", model="m", base_url="http://x", api_key="k")],
+    )
+    fake = FakeProvider()
+    runner = Runner(config, provider=fake)
+    runner.tools_list = [
+        Tool(name="noop", description="n", parameters={"type": "object", "properties": {}}, fn=lambda: "ok"),
+    ]
+    out = runner.run([{"role": "user", "content": "hi"}], [{"type": "function", "function": {"name": "noop"}}])
+    assert out == "wrap-up answer"
+    assert fake.with_tools == MAX_ITERATIONS
+    assert fake.without_tools == 1
+
+
 def test_tool_count():
     assert len(TOOLS) == 9
 

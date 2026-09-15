@@ -55,3 +55,21 @@ def rank_skills(skills: Sequence[dict], query: str) -> List[dict]:
             scored.append((1, extra_hit[1], name.lower(), item))
     scored.sort()
     return [row[-1] for row in scored]
+
+
+def highlight_fuzzy(text: str, query: str, style: str = "bold #3b82f6") -> str:
+    """把模糊命中的字符标成蓝色（Rich markup）。对照 Grok / Codex 补全高亮。"""
+    text = text or ""
+    hit = fuzzy_match(text, query)
+    escaped = text.replace("[", r"\[")
+    if not hit or not hit[0]:
+        return escaped
+    indices = set(hit[0])
+    out = []
+    for i, char in enumerate(text):
+        piece = char.replace("[", r"\[")
+        if i in indices:
+            out.append(f"[{style}]{piece}[/]")
+        else:
+            out.append(piece)
+    return "".join(out)

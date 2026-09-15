@@ -9,7 +9,39 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from rich.console import Console
 from textual.widgets import Input, OptionList
 
-from myagent.tui import BubbleMarkdown, ChatApp, ModelModal, NicknameModal, SkillsModal
+from rich.text import Text
+
+from myagent.tui import BubbleMarkdown, ChatApp, ModelModal, NicknameModal, SkillsModal, SlashHighlighter
+
+
+def test_slash_highlighter_marks_commands_blue():
+    text = Text("/using-superpowers 帮我构思")
+    SlashHighlighter().highlight(text)
+    spans = [(span.start, span.end, str(span.style)) for span in text.spans]
+    assert any(start == 0 and "/using-superpowers" == text.plain[start:end] for start, end, _ in spans)
+    assert any("#3b82f6" in style for _, _, style in spans)
+
+
+def test_slash_query_lists_matching_skills():
+    async def run():
+        agent = SimpleNamespace(
+            memory=SimpleNamespace(_messages=[]),
+            list_skill_infos=lambda: [
+                {"name": "using-superpowers", "description": "Use when starting", "valid": True},
+                {"name": "visualize", "description": "Turn ideas into visuals", "valid": True},
+            ],
+        )
+        app = ChatApp(agent)
+        async with app.run_test():
+            app._sync_slash("/su")
+            names = [item["name"] for item in app._slash_hits]
+            assert "using-superpowers" in names
+            assert "visualize" in names
+            app._slash_index = names.index("using-superpowers")
+            app._accept_slash()
+            assert app.query_one("#input", Input).value == "/using-superpowers "
+
+    asyncio.run(run())
 
 
 def test_busy_status_shows_running_and_waiting():

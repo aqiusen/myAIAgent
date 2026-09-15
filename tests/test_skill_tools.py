@@ -55,6 +55,15 @@ def test_skill_load_blocks_disabled(tmp_path):
     assert "not enabled" in result
 
 
+def test_system_prompt_requires_web_fallback_and_analysis(tmp_path):
+    agent = Agent(make_config(tmp_path))
+    prompt = agent._build_system_prompt()
+    assert "http" in prompt
+    assert "generic tips" in prompt or "空泛提示" in prompt
+    assert "完成用户的任务" in prompt
+    assert "失败" in prompt and "换方法" in prompt
+
+
 def test_agent_injects_available_skills_into_system_prompt(tmp_path):
     skills_dir = tmp_path / "skills"
     write_skill(skills_dir, "code-review", "code-review", "Review source code.")
@@ -108,6 +117,10 @@ def test_agent_activates_fuzzy_skill_mention_in_system_prompt(tmp_path):
     config = make_config(tmp_path)
     agent = Agent(config)
     assert agent.resolve_skill_name("pony") == "ponytail"
+    slash_active, slash_errors = agent.load_mentioned_skills("/ponytail 帮我改这段")
+    assert slash_errors == []
+    assert slash_active[0][0] == "ponytail"
+    assert agent.strip_skill_mentions("/ponytail 帮我改这段") == "帮我改这段"
     active, errors = agent.load_mentioned_skills("$pony 帮我改这段")
     assert errors == []
     assert active[0][0] == "ponytail"

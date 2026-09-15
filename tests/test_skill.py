@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from myagent.skill.fuzzy import fuzzy_match, rank_skills
+from myagent.skill.fuzzy import fuzzy_match, highlight_fuzzy, rank_skills
 from myagent.skill.catalog import (
     Catalog,
     Descriptor,
@@ -58,6 +58,12 @@ def test_fuzzy_match_is_subsequence():
     assert hit is not None
     assert fuzzy_match("ponytail", "xyz") is None
     assert fuzzy_match("code-review", "crv") is not None
+
+
+def test_highlight_fuzzy_marks_matched_chars():
+    marked = highlight_fuzzy("using-superpowers", "su")
+    assert "[bold #3b82f6]s[/]" in marked
+    assert "[bold #3b82f6]u[/]" in marked
 
 
 def test_rank_skills_prefers_name_over_description():

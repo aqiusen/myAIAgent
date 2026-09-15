@@ -163,10 +163,11 @@ class Runner:
 
             # 没有工具调用 → 模型给的就是最终答案
             return content or ""
-        return (
-            "已达到本轮最大工具调用次数，停止以免循环。"
-            "请根据已有工具结果直接回答；若在搜 skills，使用 "
-            "https://skills.sh/api/search?q=关键词"
+        # 对照 Suna：轮次用尽也要给用户一个基于已有证据的交代，而不是中断成空。
+        # 关掉 tools 再问一次，强制收口。
+        wrap = self._one_call(messages, [], on_delta)
+        return wrap.get("content") or (
+            "已达到本轮最大工具调用次数。请根据上面已有的工具结果直接回答。"
         )
 
     # 工具执行路由：解析模型给的工具调用，先过 Guard，再调到对应工具的执行函数

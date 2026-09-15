@@ -68,14 +68,16 @@ class OpenAICompatibleProvider(BaseProvider):
         stream: bool,
         on_delta: Optional[Callable[[str], None]] = None,
     ) -> Dict:
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            tools=tools,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            stream=stream,
-        )
+        kwargs = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": stream,
+        }
+        if tools:
+            kwargs["tools"] = tools
+        response = self.client.chat.completions.create(**kwargs)
 
         if not stream:
             # ---- 非流式：一次性拿完整结果 ----
