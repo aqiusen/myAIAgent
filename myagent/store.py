@@ -60,6 +60,13 @@ class Store:
                 created_at REAL NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id);
+            CREATE TABLE IF NOT EXISTS session_state (
+                session_id TEXT PRIMARY KEY,
+                compacted_state TEXT NOT NULL DEFAULT '',
+                working_json TEXT NOT NULL DEFAULT '[]',
+                updated_at REAL NOT NULL,
+                FOREIGN KEY(session_id) REFERENCES sessions(id)
+            );
         """)
         self.conn.commit()
 
@@ -114,6 +121,39 @@ class Store:
                 "UPDATE sessions SET updated_at = ? WHERE id = ?", (now, session_id)
             )
             self.conn.commit()
+
+    def save_compact_state(self, session_id: str, compacted_state: str, working: List[Dict]) -> None:
+        """对照 Suna session_state：compacted_state + last_messages（working）。"""
+        import json
+        payload = json.dumps(working, ensure_ascii=False)
+        now = time.time()
+        with self._lock:
+            self.conn.execute(
+                """INSERT INTO session_state (session_id, compacted_state, working_json, updated_at)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(session_id) DO UPDATE SET
+                     compacted_state=excluded.compacted_state,
+                     working_json=excluded.working_json,
+                     updated_at=excluded.updated_at""",
+                (session_id, compacted_state or "", payload, now),
+            )
+            self.conn.commit()
+
+    def load_compact_state(self, session_id: str) -> tuple:
+        """返回 (compacted_state, working_messages|None)。"""
+        import json
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT compacted_state, working_json FROM session_state WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            return "", None
+        try:
+            working = json.loads(row["working_json"] or "[]")
+        except json.JSONDecodeError:
+            working = None
+        return row["compacted_state"] or "", working if isinstance(working, list) else None
 
     def load_messages(self, session_id: str) -> List[Dict]:
         with self._lock:

@@ -166,6 +166,9 @@ class Agent:
         self.guard = guard
         self.runner.guard = guard
         self.runner.confirm_callback = confirm_callback
+        self.runner.memory = self.memory
+        self.memory.complete_fn = self._compress_complete
+        self.memory.context_window = config.max_tokens
 
         # Skill 审查器复用当前模型；prompter 由 TUI 稍后注入。
         self.skills.set_reviewer(_FnSkillReviewer(_default_skill_reviewer(provider, config.model)))
@@ -355,6 +358,17 @@ class Agent:
                 blocks.append(f"### Active Skill: {name}\nSkill root: {path}\n\n{content}")
             parts.append("## Active Skills\n" + "\n\n".join(blocks))
         return "\n\n".join(parts)
+
+    def _compress_complete(self, prompt: str, max_tokens: int) -> str:
+        """压缩专用 LLM 调用：无 tools、temperature=0（对照 Suna purpose=compress）。"""
+        resp = self.runner.provider.complete(
+            messages=[{"role": "user", "content": prompt}],
+            tools=[],
+            temperature=0,
+            max_tokens=max_tokens,
+            stream=False,
+        )
+        return (resp.get("content") or "").strip()
 
     def _refresh_system_prompt(self, active_skills=None) -> None:
         """每轮对话前刷新 Skills 摘要；若用户 $ 激活了 Skill，把正文放进系统提示词。"""

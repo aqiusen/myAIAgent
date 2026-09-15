@@ -77,6 +77,8 @@ class Runner:
         self.tool_done_callback = None
         # 完整工具列表（内置 + MCP），供 _dispatch 查找。
         self.tools_list: List = []
+        # 可选 Memory：每轮请求前按 Suna 做 Session State 压缩。
+        self.memory = None
 
     def _one_call(
         self,
@@ -89,6 +91,10 @@ class Runner:
         只对【可重试错误】重试（网络抖动、限流、5xx），最多 MODEL_MAX_RETRIES 次。
         参数错误、鉴权失败等不可重试错误直接抛出。
         """
+        if getattr(self, "memory", None) is not None:
+            self.memory.absorb(messages)
+            prepared = self.memory.snapshot(tools=schemas)
+            messages[:] = prepared
         for attempt in range(1, MODEL_MAX_RETRIES + 2):  # 1 + 重试次数
             try:
                 return self._do_call(messages, schemas, on_delta)
@@ -114,6 +120,9 @@ class Runner:
         Provider 内部处理流式/非流式，返回统一结构。
         """
         stream = on_delta is not None
+        state = ""
+        if getattr(self, "memory", None) is not None:
+            state = self.memory.session_state or ""
         return self.provider.complete(
             messages=messages,
             tools=schemas,
@@ -121,6 +130,7 @@ class Runner:
             max_tokens=self.config.max_tokens,
             stream=stream,
             on_delta=on_delta,
+            session_state=state,
         )
 
     def run(

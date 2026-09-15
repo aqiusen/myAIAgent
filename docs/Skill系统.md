@@ -177,13 +177,15 @@ Agent 接入：
 3. 把 `skill_load` / `skill_start` 并进工具列表
 4. 每轮 `run()` 前按当前启用状态刷新系统提示词
 5. TUI `on_mount` 注入 `set_skill_prompter`，`skill_start` 弹选项窗
-6. TUI `/skills` 只展示可用列表；Enter 关闭，不启用/禁用
+6. TUI 输入 `/` 模糊补全 Skill；发送 `/name` 或 `$name` 把正文写入系统提示词 Active Skills
+7. 首次启动把 `~/.codex/skills` 等按同名拷进 `skills/`，`/skills sync` 可再导入
 
 配置：
 
 ```bash
-MY_AGENT_SKILLS_DIR=skills          # 全局根目录
+MY_AGENT_SKILLS_DIR=skills
 MY_AGENT_SKILLS_RECORDS=db/skills.json
+MY_AGENT_SKILLS_USER_HOME=~          # 设为 - 则不导入其它 agent 的用户级 Skill
 ```
 
 测试里不配 records 路径则用内存 Store，避免单测写脏 `db/`。
@@ -197,7 +199,7 @@ MY_AGENT_SKILLS_RECORDS=db/skills.json
 3. frontmatter 自己解析（name/description/`>` 折叠），不引入 PyYAML，行为对齐 `metadata.go` 的测试。
 4. 工具层只做适配，和 MCP provider 同一套路。
 5. 把 Suna 的 `skill_test.go` / `catalog_test.go` / `runtime_test.go` 关键用例迁过来，再加 Agent 接入和 GuardNever 回归。
-6. TUI 只加 `skill_start` 必需的选项弹窗，没有做 Skills 管理页。
+6. TUI 只加 `skill_start` 必需的选项弹窗；后来补了 `/` 补全、Active Skills、主目录导入。
 
 中途踩过的对齐点：
 
@@ -224,12 +226,43 @@ MY_AGENT_SKILLS_RECORDS=db/skills.json
 | 手动放入目录默认启用；import/check 必须用户确认 | ✅ |
 | skill_load 返回全文；readonly Guard 也放行 | ✅ |
 | Agent 系统提示词含 Available Skills | ✅ |
-| 全套 111 个测试通过 | ✅ |
+| `$name` / 行首 `/name` 激活进系统提示词，用户消息只留请求 | ✅ |
+| 同名用户级 Skill 只拷一份；有 stamp 后启动不再扫主目录 | ✅ |
+| `/` 补全模糊匹配，匹配字与输入框命令标蓝 | ✅ |
 
-验收句：输入「帮我 review 这段代码」时，模型应先 `skill_load(name=code-review, scope=global)`，而不是靠系统提示词里写死的 review 步骤。
+验收句：输入 `/using-superpowers 帮我构思` 或 `$ponytail 简化这段`，本轮系统提示词出现 Active Skills，用户消息不含 Skill 正文。
 
 ---
 
-## 九、一句话总结
+## 十、后续补上的体验与合同（2026-09-15）
 
-**Skill 是按需加载的工作方法：短描述常驻，全文用 `skill_load` 注入，导入启用走 `skill_start`，硬检查和用户确认兜底。**
+这些是 Skill 落地之后、对照 Codex / Grok / Suna 补的，不是第一版范围。
+
+**激活通道（对照 Codex skill input item）**
+
+- 正文进系统提示词 `## Active Skills`，不当作用户请求
+- 额外 Skill 用 `skill_load`，禁止 `list_dir` skills 目录来「调用」Skill
+- 行首 `/using-superpowers` 与 `$ponytail` 等效（`/model` `/skills` `/quit` 除外）
+
+**TUI（对照 Grok `/su` 补全）**
+
+- 输入 `/` 弹出命令 + Skill 模糊列表，匹配字母蓝色加粗
+- 上下键选择，Tab/Enter 补全；完整 `/skills` 再 Enter 才执行命令
+- 输入框和用户气泡里的 `/name`、`$name` 标蓝
+
+**Suna 工具边界**
+
+- `run_command` 默认 60s，超时当工具结果返回，不崩循环
+- `http` timeout 为整数秒，默认 UA；`"8000"` 按毫秒收成 8s
+- 描述写明：能用 http/search/文件就不要用 shell；搜 skills.sh 用 `/api/search?q=`
+- 8 轮工具用尽后关掉 tools 再问一次，强制收口；`add_assistant(None)` 存成 `""`
+
+**Suna 第一句合同**
+
+system prompt 开头是：完成用户任务；失败先看原因再换方法。仓库没有命中就 `http` 查文档，不要空泛提示。
+
+---
+
+## 十一、一句话总结
+
+**Skill 是按需加载的工作方法：短描述常驻，用户用 `/` 或 `$` 激活后正文进系统提示词，模型用 `skill_load` 再加载其它 Skill。**

@@ -32,6 +32,7 @@ my-agent/
     ├── prompt_toolkit使用原因.md  输入层升级记录
     ├── 安全Guard实现.md           Guard 设计记录
     ├── Skill系统.md              Skill 实现记录
+    ├── SessionState压缩.md       上下文折叠
     └── Textual界面.md            TUI 界面升级记录
 ```
 
@@ -53,11 +54,13 @@ cp .env.example .env
 .venv/bin/python main.py
 ```
 
-进入后直接对话，例如：
+进入后直接对话。输入 `/` 可模糊搜索 Skill 和命令：
+
 ```
 你> 列出当前目录的结构
-你> 读一下 main.py 并总结它做了什么
-你> 今天日期是什么
+你> /using-superpowers 帮我构思一个功能
+你> /skills
+你> /model
 你> /quit
 ```
 
@@ -71,7 +74,7 @@ cp .env.example .env
 .venv/bin/python -m pytest tests/ -v
 ```
 
-覆盖：Store 持久化、Memory token 裁剪、Guard 安全审查、Skill 加载/启用、Agent 持久化集成、流式输出。
+覆盖：Store 持久化、Memory token 裁剪与 Session State 压缩、Guard、Skill、斜杠补全、工具超时收口、流式输出。
 
 ## 推荐阅读顺序
 

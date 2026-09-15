@@ -31,8 +31,9 @@ class BaseProvider:
         max_tokens: int,
         stream: bool,
         on_delta: Optional[Callable[[str], None]] = None,
+        session_state: str = "",
     ) -> Dict:
-        """发一次请求，返回统一结构。
+        """发一次请求，返回统一结构。session_state 对照 Suna 注入为独立 user 块。
 
         Args:
             messages: 消息列表
@@ -67,10 +68,13 @@ class OpenAICompatibleProvider(BaseProvider):
         max_tokens: int,
         stream: bool,
         on_delta: Optional[Callable[[str], None]] = None,
+        session_state: str = "",
     ) -> Dict:
+        from .compress import inject_session_state
+        payload = inject_session_state(messages, session_state) if session_state else messages
         kwargs = {
             "model": self.model,
-            "messages": messages,
+            "messages": payload,
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": stream,

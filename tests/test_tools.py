@@ -18,7 +18,7 @@ def test_runner_forces_wrapup_after_max_iterations():
             self.with_tools = 0
             self.without_tools = 0
 
-        def complete(self, messages, tools, temperature, max_tokens, stream, on_delta=None):
+        def complete(self, messages, tools, temperature, max_tokens, stream, on_delta=None, session_state=""):
             if tools:
                 self.with_tools += 1
                 return {

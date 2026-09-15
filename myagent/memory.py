@@ -14,9 +14,9 @@
   - 按 token 数裁剪，而不是简单"留最近 N 条"。
   - 系统提示词永远保留在最前面。
   - 超过预算时，保留最近消息直到接近预算，丢弃最旧的。
-  - （进阶：对丢弃的旧消息做 LLM 摘要压缩，对应 Suna 的 Session State。）
+  - 超过预算时用 Session State 折叠旧消息（对照 Suna compress.go），而不是直接丢掉。
 """
-from typing import List, Dict, Optional
+from typing import Callable, List, Dict, Optional
 
 from .store import title_from_user_input
 
@@ -56,6 +56,12 @@ class Memory:
         # 可选持久化。
         self.store = store
         self.session_id = session_id
+        # 对照 Suna sessionState：折叠后的内部记忆，不进 working、不进 system。
+        self.session_state = ""
+        # 压缩 LLM：complete_fn(prompt, max_tokens) -> str。未设置时退回直接丢弃旧消息。
+        self.complete_fn: Optional[Callable[[str, int], str]] = None
+        self.context_window = max_tokens
+        self.output_budget = min(1024, max(256, max_tokens // 4))
 
     # ---------- 增消息 ----------
     def add_system(self, content: str) -> None:
@@ -97,17 +103,56 @@ class Memory:
                 if title:
                     self.store.update_session_title(self.session_id, title)
 
+    def _persist_compact(self) -> None:
+        if self.store is None or self.session_id is None:
+            return
+        if hasattr(self.store, "save_compact_state"):
+            working = [m for m in self._messages if m.get("role") != "system"]
+            self.store.save_compact_state(self.session_id, self.session_state, working)
+
     # ---------- 读消息 ----------
-    def snapshot(self) -> Messages:
-        """返回给模型用的消息副本（已裁剪）。返回拷贝，避免外面改动内部状态。"""
-        # 系统提示词固定在顶部，不参与裁剪。
-        system = [m for m in self._messages if m["role"] == "system"]
-        # 其余消息按 token 预算裁剪。
-        rest = [m for m in self._messages if m["role"] != "system"]
-        rest = self._trim_by_tokens(rest)
-        # 兜底：再按条数裁剪。
-        if len(rest) > self.max_history:
-            rest = rest[-self.max_history:]
+    def absorb(self, messages: Messages) -> None:
+        """用 runner 正在用的消息列表覆盖 working（含 system）。"""
+        self._messages = [dict(m) for m in messages]
+
+    def snapshot(self, tools: Optional[list] = None) -> Messages:
+        """返回给模型用的 working 副本。Session State 由 Provider 注入，不进这份列表。"""
+        from .compress import (
+            compress_history_keeping_state,
+            choose_recent_keep_with_budget,
+            should_compact_messages,
+            trim_tool_results_for_context,
+        )
+
+        system = [dict(m) for m in self._messages if m.get("role") == "system"]
+        rest = [dict(m) for m in self._messages if m.get("role") != "system"]
+        rest = trim_tool_results_for_context(rest)
+        system_text = "\n".join(m.get("content") or "" for m in system)
+
+        if self.complete_fn and should_compact_messages(
+            system_text, self.session_state, rest, tools,
+            self.context_window, self.output_budget,
+        ):
+            keep = choose_recent_keep_with_budget(
+                rest, self.context_window, self.max_tokens,
+            )
+            rest, state, folded = compress_history_keeping_state(
+                rest,
+                self.session_state,
+                self.complete_fn,
+                keep_recent=keep,
+                context_window=self.context_window,
+                output_budget=self.output_budget,
+                recent_token_budget=self.max_tokens,
+            )
+            if folded:
+                self.session_state = state
+                self._messages = system + rest
+                self._persist_compact()
+        else:
+            rest = self._trim_by_tokens(rest)
+            if len(rest) > self.max_history:
+                rest = rest[-self.max_history:]
         return system + rest
 
     def _trim_by_tokens(self, messages: Messages) -> Messages:
@@ -136,3 +181,10 @@ class Memory:
         if self.store is None:
             return
         self._messages = self.store.load_messages(session_id)
+        self.session_id = session_id
+        if hasattr(self.store, "load_compact_state"):
+            state, working = self.store.load_compact_state(session_id)
+            self.session_state = state or ""
+            if working:
+                systems = [m for m in self._messages if m.get("role") == "system"]
+                self._messages = systems + [m for m in working if m.get("role") != "system"]

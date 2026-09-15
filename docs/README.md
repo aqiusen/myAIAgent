@@ -9,5 +9,6 @@
 - [核心循环详解](core-loop.md) —— 整个项目的心脏：模型-工具往返循环
 - [扩展路线图](roadmap.md) —— 完成骨架后，下一步该加什么（对应 Suna 的 Guard/记忆升级等）
 - [Skill 系统](Skill系统.md) —— 按需加载工作方法：skill_load / skill_start，对照 Suna internal/skill
+- [Session State 压缩](SessionState压缩.md) —— 旧消息折叠成固定结构，对照 Suna compress.go
 - [Suna 核心模块热身](suna-warmup.md) —— 精读 Suna 的 runner/memory/guard 心得，理解工业级和原型的区别
 - [Suna 技术依赖分析](suna-dependencies.md) —— Suna 哪些用成熟库、哪些自己写，选型哲学
