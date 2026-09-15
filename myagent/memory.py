@@ -62,11 +62,20 @@ class Memory:
         # 系统提示词不持久化：它由 Agent 每次启动重新注入，存了会重复。
         self._messages.append({"role": "system", "content": content})
 
+    def set_system(self, content: str) -> None:
+        """替换当前系统提示词。Skill 摘要变化时由 Agent 调用，仍不持久化。"""
+        for msg in self._messages:
+            if msg.get("role") == "system":
+                msg["content"] = content
+                return
+        self._messages.insert(0, {"role": "system", "content": content})
+
     def add_user(self, content: str) -> None:
         self._messages.append({"role": "user", "content": content})
         self._persist("user", content)
 
     def add_assistant(self, content: str) -> None:
+        content = content or ""
         self._messages.append({"role": "assistant", "content": content})
         self._persist("assistant", content)
 

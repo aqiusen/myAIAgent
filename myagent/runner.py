@@ -35,6 +35,10 @@ import time
 from .guard import Guard, APPROVE, REJECT, CONFIRM
 from .errors import classify_error, retryable, ModelError
 from .providers import BaseProvider, OpenAICompatibleProvider
+from .skill import TOOL_LOAD, TOOL_START
+
+# skill_load / skill_start 在 Suna 里标记 GuardNever：跳过 Guard，由 Skill Runtime 自己做启用校验。
+_SKIP_GUARD_TOOLS = {TOOL_LOAD, TOOL_START}
 
 MAX_ITERATIONS = 8  # 单次对话最多允许的模型-工具往返轮数，防死循环
 
@@ -67,8 +71,10 @@ class Runner:
         # confirm_callback(command) -> bool：ask 模式下询问用户是否放行。
         # 未提供时默认拒绝（fail-closed）。
         self.confirm_callback = confirm_callback
-        # tool_callback(name, args) -> None：工具调用时回调（TUI 用它展示工具调用）。
+        # tool_callback(name, args) -> None：工具开始执行时回调（TUI 展示调用）。
         self.tool_callback = None
+        # tool_done_callback(name) -> None：工具结束时回调（TUI 切到“等待模型”）。
+        self.tool_done_callback = None
         # 完整工具列表（内置 + MCP），供 _dispatch 查找。
         self.tools_list: List = []
 
@@ -144,6 +150,8 @@ class Runner:
                             tc["function"]["name"], tc["function"]["arguments"]
                         )
                     result_text = self._dispatch(tc)
+                    if self.tool_done_callback is not None:
+                        self.tool_done_callback(tc["function"]["name"])
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc["id"],
@@ -154,7 +162,12 @@ class Runner:
                 continue
 
             # 没有工具调用 → 模型给的就是最终答案
-            return content
+            return content or ""
+        return (
+            "已达到本轮最大工具调用次数，停止以免循环。"
+            "请根据已有工具结果直接回答；若在搜 skills，使用 "
+            "https://skills.sh/api/search?q=关键词"
+        )
 
     # 工具执行路由：解析模型给的工具调用，先过 Guard，再调到对应工具的执行函数
     def _dispatch(self, tc: Dict) -> str:
@@ -170,7 +183,7 @@ class Runner:
             return f"工具参数解析失败: {exc}"
 
         # ---- Guard 安全检查（参考 Suna internal/guard）----
-        if self.guard is not None:
+        if self.guard is not None and name not in _SKIP_GUARD_TOOLS:
             result = self.guard.check(name, kwargs)
             if result.decision == REJECT:
                 # 拒绝：把原因回给模型，让它换一种安全做法

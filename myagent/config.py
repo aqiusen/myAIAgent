@@ -110,6 +110,14 @@ class Config:
     # 审计日志路径（None 则不记录）
     guard_audit_path: str = ""
 
+    # ---------- Skill ----------
+    # 全局 Skill 根目录（对应 Suna SkillsDir）。空则 Agent 回退到项目 skills/。
+    skills_dir: str = ""
+    # 启用记录 JSON 路径（对应 Suna config.toml [skills.<name>]）。空则只放内存。
+    skills_records_path: str = ""
+    # 扫描其它 agent 用户级技能的主目录。空或 ~ 表示用户 HOME；"-" 关闭（测试默认）。
+    skills_user_home: str = "-"
+
     # 系统提示词：定义 Agent 的角色与行为边界
     system_prompt: str = (
         "你是一个在本地运行的代码 Agent。"
@@ -194,6 +202,15 @@ class Config:
             except (json.JSONDecodeError, ValueError) as exc:
                 raise RuntimeError(f"MY_AGENT_MCP_SERVERS 解析失败: {exc}")
 
+        skills_dir = os.environ.get("MY_AGENT_SKILLS_DIR", str(PROJECT_ROOT / "skills"))
+        if skills_dir and not Path(skills_dir).is_absolute():
+            skills_dir = str(PROJECT_ROOT / skills_dir)
+        records_path = os.environ.get(
+            "MY_AGENT_SKILLS_RECORDS", str(PROJECT_ROOT / "db" / "skills.json"),
+        )
+        if records_path and not Path(records_path).is_absolute():
+            records_path = str(PROJECT_ROOT / records_path)
+
         return cls(
             model=model,
             base_url=base_url,
@@ -204,4 +221,9 @@ class Config:
             guard_audit_path=os.environ.get("MY_AGENT_GUARD_AUDIT", ""),
             max_tokens=int(os.environ.get("MY_AGENT_MAX_TOKENS", "8000")),
             db_path=_db_path_from_env(),
+            skills_dir=skills_dir,
+            skills_records_path=records_path,
+            skills_user_home=os.environ.get(
+                "MY_AGENT_SKILLS_USER_HOME", os.path.expanduser("~")
+            ),
         )

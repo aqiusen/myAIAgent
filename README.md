@@ -16,11 +16,14 @@ my-agent/
 │   ├── agent.py              编排，暴露 run()   ← internal/agent
 │   ├── runner.py             模型-工具循环(心脏) ← internal/runner
 │   ├── guard.py              安全 Guard        ← internal/guard
+│   ├── skill/                Skill 扫描/加载    ← internal/skill
 │   ├── tui.py                Textual 聊天界面   ← internal/tui
 │   ├── tools/
 │   │   ├── base.py           工具抽象/声明      ← internal/tools
-│   │   └── builtin.py        内置工具(文件/命令) ← internal/tools/builtin
+│   │   ├── builtin.py        内置工具(文件/命令) ← internal/tools/builtin
+│   │   └── skill_provider.py skill_load/start  ← internal/tools/skilltools
 │   └── cli.py                命令行入口         ← internal/tui
+├── skills/                   预置全局 Skill
 └── docs/                     学习文档
     ├── architecture.md       为什么分层
     ├── tech-decisions.md     选型原因
@@ -28,6 +31,7 @@ my-agent/
     ├── roadmap.md            下一步扩展
     ├── prompt_toolkit使用原因.md  输入层升级记录
     ├── 安全Guard实现.md           Guard 设计记录
+    ├── Skill系统.md              Skill 实现记录
     └── Textual界面.md            TUI 界面升级记录
 ```
 
@@ -67,7 +71,7 @@ cp .env.example .env
 .venv/bin/python -m pytest tests/ -v
 ```
 
-覆盖：Store 持久化、Memory token 裁剪、Guard 安全审查、Agent 持久化集成、流式输出。
+覆盖：Store 持久化、Memory token 裁剪、Guard 安全审查、Skill 加载/启用、Agent 持久化集成、流式输出。
 
 ## 推荐阅读顺序
 

@@ -45,6 +45,16 @@ def test_agent_persists_messages(tmp_path):
     assert msgs[0]["role"] == "user"
 
 
+def test_add_assistant_none_does_not_break_sqlite(tmp_path):
+    c = make_config(str(tmp_path / "test.db"))
+    a = Agent(c, confirm_callback=lambda p: False)
+    a.memory.add_user("你好")
+    a.memory.add_assistant(None)
+    msgs = a.store.load_messages(a.memory.session_id)
+    assert msgs[-1]["role"] == "assistant"
+    assert msgs[-1]["content"] == ""
+
+
 def test_agent_run_syncs_lazy_session_id(tmp_path):
     c = make_config(str(tmp_path / "test.db"))
     a = Agent(c, confirm_callback=lambda p: False)

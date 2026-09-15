@@ -4,6 +4,14 @@
 # 会话数据库
 /db/
 
+# 从其它 agent 主目录同步来的 Skill（保留预置的两个）
+/skills/.imported-user-skills.json
+/skills/*
+!/skills/code-review/
+!/skills/code-review/**
+!/skills/write-tests/
+!/skills/write-tests/**
+
 # 虚拟环境
 .venv/
 

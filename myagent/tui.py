@@ -11,18 +11,23 @@
   - Guard 的 ask 模式确认：默认拒绝（fail-closed），避免线程交互复杂度。
 """
 import re
-from typing import Optional
+import threading
+import time
+from typing import List, Optional
 
 from rich.cells import cell_len
 from rich.markdown import Markdown
 from rich.measure import Measurement
 from textual import events, work
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import VerticalScroll, Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Header, Footer, Input, Label, Static
+from textual.widgets import Button, Header, Footer, Input, Label, OptionList, Static
+from textual.widgets.option_list import Option
 
 from .agent import Agent
+from .skill import rank_skills
 
 
 LINK_RE = re.compile(r"!\[([^\]]*)\]\([^)]+\)|\[([^\]]+)\]\([^)]+\)")
@@ -214,11 +219,208 @@ class ModelModal(ModalScreen[Optional[str]]):
         self.query_one(f"#model-choice-{self._selected_index}", Button).focus()
 
 
+class SkillsModal(ModalScreen[Optional[object]]):
+    """/skills 弹窗：对照 Codex SkillPopup，可模糊搜索并选用 Skill。"""
+
+    CSS = """
+    SkillsModal {
+        align: center middle;
+    }
+    #skills-panel {
+        width: 72;
+        height: 22;
+        padding: 1 2;
+        border: round $primary;
+        background: $surface;
+    }
+    #skills-title {
+        width: 100%;
+        height: 1;
+        margin-bottom: 1;
+        text-style: bold;
+        color: $primary;
+    }
+    #skills-hint {
+        width: 100%;
+        height: auto;
+        margin-bottom: 1;
+        color: $text-muted;
+    }
+    #skills-filter {
+        width: 100%;
+        height: 3;
+        margin-bottom: 1;
+    }
+    #skills-list {
+        width: 100%;
+        height: 1fr;
+    }
+    #skills-cancel {
+        width: 100%;
+        height: 3;
+        margin-top: 1;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "dismiss", show=False),
+        Binding("up", "skills_up", show=False, priority=True),
+        Binding("down", "skills_down", show=False, priority=True),
+    ]
+
+    def __init__(self, skills: list[dict], query: str = ""):
+        super().__init__()
+        self.skills = skills
+        self._query = query
+        self._visible: list[dict] = []
+
+    def compose(self) -> ComposeResult:
+        yield Vertical(
+            Label(f"可用 Skills（{len(self.skills)}）", id="skills-title"),
+            Label("输入模糊搜索。Enter 选用（插入 $name）。Esc 关闭。", id="skills-hint"),
+            Input(placeholder="搜索 name / description", value=self._query, id="skills-filter"),
+            OptionList(id="skills-list"),
+            Button("关闭", id="skills-cancel"),
+            id="skills-panel",
+        )
+
+    @staticmethod
+    def _label(item: dict) -> str:
+        name = item.get("name") or ""
+        desc = (item.get("description") or "").strip()
+        if not item.get("valid"):
+            desc = item.get("error") or "无效"
+        if len(desc) > 48:
+            desc = desc[:45] + "..."
+        return f"{name}  {desc}" if desc else name
+
+    def on_mount(self) -> None:
+        self._rebuild_options()
+        box = self.query_one("#skills-filter", Input)
+        box.focus()
+        box.cursor_position = len(box.value)
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "skills-filter":
+            return
+        self._query = event.value
+        self._rebuild_options()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id != "skills-filter":
+            return
+        event.stop()
+        event.prevent_default()
+        self._select_highlighted()
+
+    def _rebuild_options(self) -> None:
+        self._visible = rank_skills(self.skills, self._query)
+        listing = self.query_one("#skills-list", OptionList)
+        listing.clear_options()
+        if self._visible:
+            listing.add_options(
+                [Option(self._label(item), id=f"hit-{index}") for index, item in enumerate(self._visible)]
+            )
+            listing.highlighted = 0
+        title = self.query_one("#skills-title", Label)
+        title.update(f"可用 Skills（{len(self._visible)}/{len(self.skills)}）")
+
+    def action_skills_up(self) -> None:
+        self.query_one("#skills-list", OptionList).action_cursor_up()
+
+    def action_skills_down(self) -> None:
+        self.query_one("#skills-list", OptionList).action_cursor_down()
+
+    def _select_highlighted(self) -> None:
+        if not self._visible:
+            self.dismiss(None)
+            return
+        listing = self.query_one("#skills-list", OptionList)
+        index = listing.highlighted if listing.highlighted is not None else 0
+        if index < 0 or index >= len(self._visible):
+            self.dismiss(None)
+            return
+        item = self._visible[index]
+        self.dismiss({"action": "use", "name": item.get("name") or ""})
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        self._select_highlighted()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "skills-cancel":
+            self.dismiss(None)
+
+
+class SkillChoiceModal(ModalScreen[Optional[str]]):
+    """skill_start 工作流的选项弹窗（对应 Suna EventAskUser）。"""
+
+    CSS = """
+    SkillChoiceModal {
+        align: center middle;
+    }
+    #skill-choice-panel {
+        width: 64;
+        height: auto;
+        max-height: 24;
+        padding: 1 2;
+        border: round $warning;
+        background: $surface;
+    }
+    #skill-choice-question {
+        width: 100%;
+        height: auto;
+        margin-bottom: 1;
+    }
+    .skill-choice {
+        width: 100%;
+        margin-bottom: 1;
+    }
+    """
+
+    BINDINGS = [("escape", "dismiss")]
+
+    def __init__(self, question: str, options: List[str]):
+        super().__init__()
+        self.question = question
+        self.options = options
+        self._selected_index = 0
+
+    def compose(self) -> ComposeResult:
+        yield Vertical(
+            Static(self.question, id="skill-choice-question"),
+            *(
+                Button(option, id=f"skill-choice-{index}", classes="skill-choice")
+                for index, option in enumerate(self.options)
+            ),
+            id="skill-choice-panel",
+        )
+
+    def on_mount(self) -> None:
+        if self.options:
+            self.query_one("#skill-choice-0", Button).focus()
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key not in {"up", "down"} or not self.options:
+            return
+        event.stop()
+        event.prevent_default()
+        self._selected_index = (
+            self._selected_index + (-1 if event.key == "up" else 1)
+        ) % len(self.options)
+        self.query_one(f"#skill-choice-{self._selected_index}", Button).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        index = int(event.button.id.removeprefix("skill-choice-"))
+        self.dismiss(self.options[index])
+
+
 class ChatApp(App):
     """myAIAgent 的聊天界面。"""
 
     TITLE = "myAIAgent"
     SUB_TITLE = "本地代码 Agent"
+    _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
     CSS = """
     #chat {
@@ -309,6 +511,14 @@ class ChatApp(App):
         self._input_history = self._loaded_user_inputs()
         self._history_index: Optional[int] = None
         self._history_draft = ""
+        self._busy = False
+        self._busy_phase = ""
+        self._busy_tool = ""
+        self._busy_started = 0.0
+        self._spin_i = 0
+        self._status_timer = None
+        self._busy_widget = None
+        self._busy_row = None
 
     # ---------- 界面搭建 ----------
     def compose(self) -> ComposeResult:
@@ -319,9 +529,12 @@ class ChatApp(App):
 
     def on_mount(self) -> None:
         self.query_one("#input").focus()
+        setter = getattr(self.agent, "set_skill_prompter", None)
+        if callable(setter):
+            setter(self._ask_skill_choice)
         self._add_message(
             "myAIAgent",
-            "已启动。输入 /model 切换模型，/setting 设置昵称，/q 或 /quit 退出。",
+            "已启动。输入 /model 切换模型，/skills 搜索技能，/setting 设置昵称，/q 或 /quit 退出。",
             "system-row",
         )
         # 若恢复了历史会话，把已加载的上下文渲染出来
@@ -387,6 +600,69 @@ class ChatApp(App):
         """工具调用：居中显示为系统消息。"""
         self._add_message("工具", f"{name}({args})", "tool-row")
 
+    def _on_tool_start(self, name: str, args: str) -> None:
+        """工具开始跑：立刻给“还在工作”的反馈，避免长命令看起来像卡住。"""
+        self._add_tool_call(name, args)
+        self._set_busy("tool", name)
+
+    def _on_tool_done(self, name: str) -> None:
+        """工具结束、下一次模型调用还没出字：切到等待状态。"""
+        self._set_busy("model")
+
+    def _set_busy(self, phase: str, tool: str = "") -> None:
+        self._busy = True
+        self._busy_phase = phase
+        if tool:
+            self._busy_tool = tool
+        self._busy_started = time.monotonic()
+        self._ensure_busy_row()
+        if self._status_timer is None:
+            self._status_timer = self.set_interval(0.12, self._tick_busy)
+        self._tick_busy()
+
+    def _ensure_busy_row(self) -> None:
+        if self._busy_widget is not None:
+            return
+        row, widget = self._build_message_row("系统", "", "system-row")
+        self._busy_row = row
+        self._busy_widget = widget
+        chat = self.query_one("#chat")
+        chat.mount(row)
+        chat.scroll_end(animate=False)
+
+    def _tick_busy(self) -> None:
+        if not self._busy:
+            return
+        self._spin_i = (self._spin_i + 1) % len(self._SPINNER)
+        elapsed = max(0, int(time.monotonic() - self._busy_started))
+        spin = self._SPINNER[self._spin_i]
+        if self._busy_phase == "tool":
+            msg = f"{spin} 正在执行 {self._busy_tool} · {elapsed}s"
+        else:
+            msg = f"{spin} 等待模型继续 · {elapsed}s"
+        self.sub_title = msg
+        if self._busy_widget is not None:
+            self._busy_widget.update(f"[bold]系统:[/] {msg}")
+
+    def _clear_busy(self) -> None:
+        self._busy = False
+        self._busy_phase = ""
+        self._busy_tool = ""
+        if self._status_timer is not None:
+            self._status_timer.stop()
+            self._status_timer = None
+        self.sub_title = "本地代码 Agent"
+        if self._busy_row is not None:
+            self._busy_row.remove()
+            self._busy_row = None
+            self._busy_widget = None
+
+    def _on_stream_delta(self, delta: str) -> None:
+        """模型开始出字：忙碌条可以收掉，气泡本身就是进度。"""
+        if self._busy:
+            self._clear_busy()
+        self._append_stream(delta)
+
     def _append_stream(self, delta: str) -> None:
         """流式输出：把增量追加到当前 Agent 气泡上。"""
         if self._stream is None:
@@ -398,6 +674,10 @@ class ChatApp(App):
     def _finish_stream(self) -> None:
         self._stream = None
         self._stream_text = ""
+
+    def _finish_turn(self) -> None:
+        self._finish_stream()
+        self._clear_busy()
 
     # ---------- 交互 ----------
     def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -426,9 +706,33 @@ class ChatApp(App):
             self.query_one("#input").clear()
             self._switch_model(text.removeprefix("/model ").strip())
             return
+        if text == "/skills":
+            self.query_one("#input").clear()
+            self._open_skills_modal()
+            return
+        if text == "/skills sync":
+            self.query_one("#input").clear()
+            self._sync_user_skills()
+            return
+        if text.startswith("/skills "):
+            query = text.removeprefix("/skills ").strip()
+            self.query_one("#input").clear()
+            self._open_skills_modal(query)
+            return
+        if text.startswith("/skills"):
+            self.query_one("#input").clear()
+            self._add_message("系统", "用法：/skills  、 /skills 关键词  或  /skills sync", "system-row")
+            return
         self.query_one("#input").clear()
         self._remember_input(text)
         self._add_message("你", text, "user-row")
+        mentions = re.findall(r"\$([A-Za-z0-9._-]+)", text)
+        if mentions:
+            self._add_message(
+                "系统",
+                "已激活 Skill：" + ", ".join(mentions) + "（正文作为本轮指令，不是用户请求）",
+                "system-row",
+            )
 
         # 创建 Agent 流式气泡（靠左）
         row, self._stream = self._build_message_row("Agent", "", "agent-row")
@@ -436,11 +740,15 @@ class ChatApp(App):
         self.query_one("#chat").scroll_end(animate=False)
         self._stream_text = ""
 
+        # 立刻进入忙碌态，避免首包模型/长命令期间界面像停住
+        self._set_busy("model")
         # 后台线程跑 agent，不卡 UI（@work(thread=True) 会自动启动 worker）
         self._run_agent(text)
 
     def on_key(self, event: events.Key) -> None:
         if event.key not in {"up", "down"}:
+            return
+        if isinstance(self.screen, ModalScreen):
             return
         input_box = self.query_one("#input", Input)
         if not input_box.has_focus:
@@ -494,6 +802,39 @@ class ChatApp(App):
             self._on_model_modal,
         )
 
+    def _open_skills_modal(self, query: str = "") -> None:
+        """打开 Skill 列表（对照 Codex SkillPopup：可搜索、Enter 选用）。"""
+        lister = getattr(self.agent, "list_skill_infos", None)
+        skills = lister() if callable(lister) else []
+        self.push_screen(SkillsModal(skills, query=query), self._on_skills_modal)
+
+    def _on_skills_modal(self, result) -> None:
+        if isinstance(result, dict) and result.get("action") == "use" and result.get("name"):
+            self._insert_skill_mention(result["name"])
+            return
+        self.query_one("#input").focus()
+
+    def _insert_skill_mention(self, name: str) -> None:
+        """把选用的 Skill 写成 Codex 风格的 `$name`，发送时再展开全文。"""
+        box = self.query_one("#input", Input)
+        current = box.value
+        stripped = re.sub(r"\$[A-Za-z0-9._-]*$", "", current).rstrip()
+        box.value = f"{stripped} ${name} ".lstrip() if stripped else f"${name} "
+        box.focus()
+        box.cursor_position = len(box.value)
+
+    def _sync_user_skills(self) -> None:
+        """从 ~/.codex/skills 等再导入还没有的 Skill。"""
+        importer = getattr(self.agent, "import_user_skills", None)
+        if not callable(importer):
+            self._add_message("系统", "当前 Agent 不支持同步外部 Skill。", "system-row")
+            return
+        copied = importer()
+        if not copied:
+            self._add_message("系统", "没有新的 Skill 需要导入。", "system-row")
+            return
+        self._add_message("系统", "已导入：" + ", ".join(copied), "system-row")
+
     def _on_model_modal(self, ref: Optional[str]) -> None:
         if ref is not None:
             self._switch_model(ref)
@@ -507,20 +848,40 @@ class ChatApp(App):
         except KeyError as exc:
             self._add_message("系统", str(exc), "system-row")
 
+    def _ask_skill_choice(self, question: str, options: List[str]) -> str:
+        """从 Agent 工作线程弹出 skill_start 选项，阻塞直到用户选择。"""
+        chosen: List[str] = []
+        done = threading.Event()
+
+        def on_result(value: Optional[str]) -> None:
+            chosen.append(value or "")
+            done.set()
+
+        def open_modal() -> None:
+            self.push_screen(SkillChoiceModal(question, options), on_result)
+
+        self.call_from_thread(open_modal)
+        done.wait()
+        return chosen[0] if chosen else ""
+
     @work(thread=True)
     def _run_agent(self, text: str) -> None:
         def on_delta(delta: str) -> None:
-            self.call_from_thread(self._append_stream, delta)
+            self.call_from_thread(self._on_stream_delta, delta)
 
         def on_tool_call(name: str, args: str) -> None:
-            self.call_from_thread(self._add_tool_call, name, args)
+            self.call_from_thread(self._on_tool_start, name, args)
 
+        def on_tool_done(name: str) -> None:
+            self.call_from_thread(self._on_tool_done, name)
+
+        self.agent.runner.tool_done_callback = on_tool_done
         try:
             self.agent.run(text, on_delta=on_delta, on_tool_call=on_tool_call)
         except Exception as exc:
             self.call_from_thread(self._append_stream, f"\n**错误:** {exc}")
         finally:
-            self.call_from_thread(self._finish_stream)
+            self.call_from_thread(self._finish_turn)
 
 
 def run_tui(agent: Agent) -> None:

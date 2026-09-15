@@ -7,6 +7,7 @@
     memory  -> 会话历史与上下文裁剪（对应 Suna internal/memory）
     tools   -> 工具目录与 schema（对应 Suna internal/tools）
     runner  -> 模型调用循环（对应 Suna internal/runner）
+    skill   -> 按需加载的工作方法（对应 Suna internal/skill）
     agent   -> 编排：串起上面所有模块（对应 Suna internal/agent）
     cli     -> 命令行交互入口
 """

@@ -31,22 +31,52 @@ def _list_dir(path: str) -> str:
         return f"列出目录失败: {exc}"
 
 
-def _run_command(command: str) -> str:
-    """在本地执行一条 shell 命令并返回输出。
+def _parse_timeout(value, default: int, max_s: int) -> tuple:
+    """解析 timeout（对照 Suna parseExecTimeout）。
 
-    注意：这个工具是"命令执行能力"的入口，也是最危险的权力来源。
-    真实工程里（参考 Suna 的 Guard）必须对它做安全审查 / 用户确认。
-    这里只做最基础的超时保护，安全话题见 docs/架构与选型.md。
+    返回 (秒, 错误)。字符串数字、JSON number 都收；>180 按毫秒理解。
+    非法值把错误回给模型，不抛异常。
+    """
+    if value is None or value == "":
+        return default, ""
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return 0, "timeout must be a positive integer (seconds, not milliseconds)"
+    if seconds <= 0:
+        return 0, "timeout must be a positive integer"
+    if seconds > 180:
+        seconds = seconds / 1000.0
+    return max(1, min(int(seconds), max_s)), ""
+
+
+def _run_command(command: str, timeout: int = 60) -> str:
+    """前台执行 shell（对照 Suna exec 前台 run）。
+
+    默认 60 秒。超时把部分输出和 timed_out 说明回给模型，不中断对话循环。
     """
     import subprocess
-    result = subprocess.run(
-        command,
-        shell=True,
-        capture_output=True,
-        text=True,
-        timeout=30,          # 防止命令跑死
-    )
-    output = (result.stdout or "") 
+    limit, err = _parse_timeout(timeout, default=60, max_s=120)
+    if err:
+        return err
+    try:
+        result = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=limit,
+        )
+    except subprocess.TimeoutExpired as exc:
+        partial = (exc.stdout or "") + (exc.stderr or "")
+        extra = f"\n{partial}" if partial else ""
+        return (
+            f"command timed out after {limit}s.{extra}\n"
+            f"Timeout: {limit} seconds.\n"
+            "Do not retry the same command. Prefer the http tool for URLs; "
+            "skills search: GET https://skills.sh/api/search?q=QUERY"
+        )
+    output = (result.stdout or "")
     if result.stderr:
         output += f"\n[stderr]\n{result.stderr}"
     if result.returncode != 0:
@@ -194,23 +224,27 @@ def _read_image(source: str) -> str:
 
 
 def _http(url: str, method: str = "GET", headers: dict = None, body: str = "", timeout: int = 30) -> str:
-    """发送 HTTP 请求（参考 Suna 的 HTTP）。"""
+    """发送 HTTP 请求（对照 Suna HTTP）。timeout 默认 30 秒。"""
     import urllib.request
     import urllib.error
-    method = method.upper()
+    method = (method or "GET").upper()
+    headers = dict(headers or {})
+    headers.setdefault("User-Agent", "myAIAgent/1.0")
+    limit, err = _parse_timeout(timeout, default=30, max_s=60)
+    if err:
+        return err
     try:
-        req = urllib.request.Request(url, method=method, headers=headers or {})
+        req = urllib.request.Request(url, method=method, headers=headers)
         if body and method in ("POST", "PUT", "PATCH"):
             req.data = body.encode("utf-8")
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=limit) as resp:
             status = resp.status
-            resp_headers = dict(resp.headers)
             content = resp.read(100 * 1024).decode("utf-8", errors="ignore")
-        return f"HTTP {status}\n{content}"
+        return f"Status: {status}\nBody:\n{content}"
     except urllib.error.HTTPError as exc:
-        return f"HTTP {exc.code}: {exc.reason}"
+        return f"Status: {exc.code} {exc.reason}"
     except Exception as exc:
-        return f"HTTP 请求失败: {exc}"
+        return f"request failed: {exc}"
 
 
 # 内置工具清单：每项 = (名字, 描述, 参数名列表, 必填参数, 执行函数)
@@ -230,8 +264,11 @@ _REGISTRY = [
     ).bind(_list_dir),
     Tool.make(
         name="run_command",
-        description="在本地执行一条 shell 命令并返回其输出。当需要运行程序或查看系统信息时使用。",
-        param_names=["command"],
+        description=(
+            "Run a shell command. Prefer dedicated file, search, and HTTP tools for supported operations. "
+            "timeout is seconds (default 60, max 120). Do not use this to scrape websites."
+        ),
+        param_names=["command", "timeout"],
         required=["command"],
     ).bind(_run_command),
     Tool.make(
@@ -266,7 +303,10 @@ _REGISTRY = [
     ).bind(_read_image),
     Tool.make(
         name="http",
-        description="发送 HTTP 请求并返回状态码和响应体。method 默认 GET，可传 headers/body。",
+        description=(
+            "Send an HTTP request and return status and body. timeout is seconds (default 30). "
+            "For skills.sh search use GET https://skills.sh/api/search?q=QUERY — do not fetch the homepage HTML."
+        ),
         param_names=["url", "method", "headers", "body", "timeout"],
         required=["url"],
     ).bind(_http),

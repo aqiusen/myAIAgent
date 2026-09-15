@@ -49,6 +49,8 @@ def _type_hint(name: str) -> Optional[str]:
     return {
         "path": "string",
         "query": "string",
+        "timeout": "integer",
+        "max_results": "integer",
     }.get(name, "string")
 
 

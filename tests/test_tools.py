@@ -91,4 +91,31 @@ def test_read_image(tmp_path):
 
 def test_http():
     result = tool_for("http").run(url="https://httpbin.org/get")
-    assert "HTTP 200" in result
+    assert "Status: 200" in result
+
+
+def test_timeout_schema_is_integer():
+    http_schema = tool_for("http").schema["function"]["parameters"]["properties"]
+    cmd_schema = tool_for("run_command").schema["function"]["parameters"]["properties"]
+    assert http_schema["timeout"]["type"] == "integer"
+    assert cmd_schema["timeout"]["type"] == "integer"
+
+
+def test_parse_timeout_seconds_and_milliseconds():
+    from myagent.tools.builtin import _parse_timeout
+    seconds, err = _parse_timeout("8000", default=30, max_s=60)
+    assert err == "" and seconds == 8
+    seconds, err = _parse_timeout(20, default=30, max_s=60)
+    assert err == "" and seconds == 20
+    _, err = _parse_timeout("bad", default=30, max_s=60)
+    assert "positive integer" in err
+
+
+def test_run_command_prefers_dedicated_tools():
+    desc = tool_for("run_command").schema["function"]["description"]
+    assert "Prefer dedicated file, search, and HTTP tools" in desc
+
+
+def test_run_command_timeout_returns_message():
+    result = tool_for("run_command").run(command="sleep 5", timeout=1)
+    assert "timed out" in result
