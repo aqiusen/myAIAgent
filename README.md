@@ -33,6 +33,7 @@ my-agent/
     ├── 安全Guard实现.md           Guard 设计记录
     ├── Skill系统.md              Skill 实现记录
     ├── SessionState压缩.md       上下文折叠
+    ├── Subtask.md                spawn 子任务
     └── Textual界面.md            TUI 界面升级记录
 ```
 

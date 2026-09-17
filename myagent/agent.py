@@ -19,6 +19,9 @@ from .store import Store
 from .model_registry import ModelRegistry
 from .tools.mcp_provider import MCPToolProvider
 from .tools.skill_provider import SkillToolProvider
+from .tools.spawn_provider import make_spawn_tool
+from .tools.base import can_grant_to_subtask
+from .subtask import Request as SubtaskRequest, render_subtask_system, result_payload, run_subtask
 from .skill import (
     SCOPE_PROJECT,
     CallbackPrompter,
@@ -150,7 +153,9 @@ class Agent:
             self.mcp_provider = MCPToolProvider(config.mcp_servers)
             self.tools_list.extend(self.mcp_provider.load())
         self.tools_list.extend(self.skill_provider.tools())
+        self.tools_list.append(make_spawn_tool(self.tools_list, self.execute_spawn))
         self.schemas = [t.schema for t in self.tools_list]  # 工具声明（只给模型看的那份）
+        self._in_subtask = False
 
         # 先建 Runner（它持有模型 Provider），再建 Guard 复用其客户端。
         provider = self.registry.get_provider(model_ref)
@@ -342,7 +347,8 @@ class Agent:
             "name and scope=global. Do not list_dir or read_file the skills/ "
             "directory to activate a Skill.\n"
             "After creating or importing a global Skill, use `skill_start`; "
-            "do not bypass its verification and enable decisions."
+            "do not bypass its verification and enable decisions.\n"
+            "Available subtask models:\n" + self._spawn_models_summary()
         )
         parts = [self.config.system_prompt]
         if summary:
@@ -358,6 +364,70 @@ class Agent:
                 blocks.append(f"### Active Skill: {name}\nSkill root: {path}\n\n{content}")
             parts.append("## Active Skills\n" + "\n\n".join(blocks))
         return "\n\n".join(parts)
+
+    def _spawn_models_summary(self) -> str:
+        refs = self.registry.list_models()
+        if not refs:
+            return "- No models configured. Configure a model before using spawn."
+        return "\n".join(f"- {ref}" for ref in refs)
+
+    def execute_spawn(self, task: str = "", model: str = "", tools=None, context: str = "") -> str:
+        """对照 Suna ExecuteSpawnTool：独立模型、独立上下文、缩小工具箱。"""
+        import json
+        if self._in_subtask:
+            return "tool \"spawn\" is not available to subtasks"
+        task = (task or "").strip()
+        if not task:
+            return "task is required"
+        model_ref = (model or "").strip()
+        if not model_ref:
+            return "spawn requires explicit model. Choose one of: " + ", ".join(self.registry.list_models())
+        if not self.registry.has(model_ref):
+            return f'invalid spawn model "{model_ref}". Choose one of: ' + ", ".join(self.registry.list_models())
+        allowed, err = self._build_subtask_tools(tools)
+        if err:
+            return err
+        names = [t.name for t in allowed]
+        prompt = render_subtask_system(task, ", ".join(names) or "none", context or "")
+        req = SubtaskRequest(
+            task=task,
+            system=prompt,
+            provider=self.registry.get_provider(model_ref),
+            config=self.config,
+            tools=allowed,
+            guard=self.guard,
+            confirm_callback=lambda p: False,
+        )
+        self._in_subtask = True
+        try:
+            res = run_subtask(req)
+        finally:
+            self._in_subtask = False
+        payload = result_payload(res)
+        text = json.dumps(payload, ensure_ascii=False)
+        if res.status == "failed":
+            err_text = (res.error or res.text or "subtask failed").strip()
+            return f"{text}\n[spawn error] {err_text}"
+        return text
+
+    def _build_subtask_tools(self, value) -> tuple:
+        grantable = {t.name: t for t in self.tools_list if can_grant_to_subtask(t)}
+        names = value if isinstance(value, list) else []
+        allowed = []
+        seen = set()
+        for name in names:
+            name = str(name or "").strip()
+            if not name or name in seen:
+                continue
+            tool = grantable.get(name)
+            if tool is None:
+                return [], (
+                    f'invalid spawn tool "{name}". Choose from: '
+                    + ", ".join(sorted(grantable))
+                )
+            seen.add(name)
+            allowed.append(tool)
+        return allowed, ""
 
     def _compress_complete(self, prompt: str, max_tokens: int) -> str:
         """压缩专用 LLM 调用：无 tools、temperature=0（对照 Suna purpose=compress）。"""

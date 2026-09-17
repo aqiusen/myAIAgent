@@ -95,6 +95,7 @@ class SkillToolProvider:
                 ),
                 parameters=load_parameters(),
                 fn=self.execute_load,
+                source="skill",
             ),
             Tool(
                 name=TOOL_START,
@@ -105,6 +106,7 @@ class SkillToolProvider:
                 ),
                 parameters=start_parameters(),
                 fn=self.execute_start,
+                source="skill",
             ),
         ]
 

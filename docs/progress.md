@@ -18,12 +18,11 @@
 
 ## 现在在哪
 
-阶段 0–6 已走完，阶段 2.3 Session State 压缩已按 Suna 落地。
+阶段 0–7 已走完（含 Session State 压缩与 spawn）。
 阶段 9 的 TUI 够用。不要再加页面。
 
 真正还没学到的 Agent 概念：
 
-- **Subtask / spawn**（阶段 7）—— 推荐下一课
 - **daemon 进程分离**（阶段 8）
 
 ---
@@ -41,7 +40,7 @@
 | 4 | 模型抽象 | 完成 | `internal/model` | Provider + Registry + `/model` 切换 |
 | 5 | 工具 + MCP | 完成 | builtin + mcp | 9 个内置工具 + stdio MCP client |
 | 6 | Skill | 完成 | `internal/skill` | 目录、skill_load/start、主目录导入去重、`/` 与 `$` 激活进系统提示词 |
-| 7 | Subtask | 未做 | `internal/subtask` | 没有 `spawn`，没有独立上下文 |
+| 7 | Subtask | 完成 | `internal/subtask` | `spawn` 独立模型/上下文/工具箱，不能嵌套、不能问用户 |
 | 8 | daemon | 未做 | daemon + protocol + transport | TUI 和 agent 还在同一个进程里 |
 | 9 | TUI | 够用 | `internal/tui` | 聊天、流式、忙碌态、`/` 模糊补全、命令标蓝、`/model` `/skills` |
 
@@ -49,7 +48,7 @@
 
 ## 手头未完成（WIP）
 
-无。Session State 压缩已落地，见 [SessionState压缩.md](SessionState压缩.md)。
+无。Subtask / spawn 已落地，见 [Subtask.md](Subtask.md)。
 
 ---
 
@@ -57,24 +56,11 @@
 
 每次只开一项。
 
-### 1. Subtask / `spawn`（阶段 7）—— 推荐下一个新功能
-
-Suna 的招牌能力。本项目已有模型注册表，正好用上。
-
-要做的：
-
-- 主 agent 调 `spawn(model, task, context, tools)`
-- 子任务**不继承**主会话历史、记忆、完整工具箱
-- 返回结构化结果 + 副作用披露
-- 子任务不能再 spawn、不能问用户
-
-验收：「用另一个模型独立 review 这段代码，只给只读工具」。
-
-### 2. daemon + 协议（阶段 8）—— 最后做
+### 1. daemon + 协议（阶段 8）—— 下一课，也是最后一块大课
 
 Suna 的 TUI 是独立客户端，走 JSON-RPC 连 daemon。本项目界面和业务还在一个进程里。
 
-先把 Subtask 做进同一个 `Agent`，再拆进程。现在拆等于能力没齐就先搬家。
+Skill / compact / spawn 已在同一个 Agent 里。下一步才是拆进程。
 
 ---
 
@@ -87,7 +73,8 @@ Suna 的 TUI 是独立客户端，走 JSON-RPC 连 daemon。本项目界面和�
 - Anthropic 原生 adapter（OpenAI 兼容端点已经够用）
 - TOML 配置、结构化日志、自更新（阶段 9 发行打磨）
 - 并发跑工具、token calibrator（runner 保护层，不是新概念）
-- Guard workspace 边界（有空可补，优先级低于 Subtask）
+- Guard workspace 边界（有空再补）
+- Suna 的 SubtaskFor 模型过滤、并发多个 spawn、子任务事件流进 TUI
 
 ---
 
@@ -116,7 +103,7 @@ Suna 的 TUI 是独立客户端，走 JSON-RPC 连 daemon。本项目界面和�
 [x] 阶段 5.2  结构化 schema
 [x] 阶段 5.3  MCP 集成
 [x] 阶段 6    Skill 系统
-[ ] 阶段 7    Subtask / spawn
+[x] 阶段 7    Subtask / spawn
 [ ] 阶段 8    daemon + protocol + transport
 [x] 阶段 9    TUI：聊天 + `/` 补全 + 忙碌态，不要再加页面
 ```

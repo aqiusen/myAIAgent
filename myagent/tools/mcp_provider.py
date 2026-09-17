@@ -58,6 +58,7 @@ class MCPToolProvider:
                         description=item.get("description", ""),
                         parameters=schema,
                         fn=self._make_executor(client, item.get("name", "")),
+                        source="mcp",
                     )
                     self._tools.append(tool)
             except Exception as exc:

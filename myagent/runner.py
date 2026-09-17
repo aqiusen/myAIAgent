@@ -36,9 +36,10 @@ from .guard import Guard, APPROVE, REJECT, CONFIRM
 from .errors import classify_error, retryable, ModelError
 from .providers import BaseProvider, OpenAICompatibleProvider
 from .skill import TOOL_LOAD, TOOL_START
+from .tools.spawn_provider import TOOL_SPAWN
 
-# skill_load / skill_start 在 Suna 里标记 GuardNever：跳过 Guard，由 Skill Runtime 自己做启用校验。
-_SKIP_GUARD_TOOLS = {TOOL_LOAD, TOOL_START}
+# skill_load / skill_start / spawn 在 Suna 里标记 GuardNever。
+_SKIP_GUARD_TOOLS = {TOOL_LOAD, TOOL_START, TOOL_SPAWN}
 
 MAX_ITERATIONS = 8  # 单次对话最多允许的模型-工具往返轮数，防死循环
 

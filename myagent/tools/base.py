@@ -63,11 +63,13 @@ class Tool:
         description: str,             # 给模型看的说明，决定它何时该用这个工具
         parameters: Dict[str, Any],   # JSON Schema 描述参数
         fn: Callable[..., str],       # 真正执行的函数，返回给模型的字符串
+        source: str = "builtin",      # builtin | mcp | skill | agent（对照 Suna Source.Kind）
     ):
         self.name = name
         self.description = description
         self.parameters = parameters
         self.fn = fn
+        self.source = source
 
     @property
     def schema(self) -> Dict[str, Any]:
@@ -138,8 +140,13 @@ class Tool:
         return self
 
 
+def can_grant_to_subtask(tool: "Tool") -> bool:
+    """对照 Suna CanGrantToSubtask：子任务只能拿 builtin / MCP，不能拿 spawn 和 skill。"""
+    return getattr(tool, "source", "builtin") in {"builtin", "mcp"}
+
+
 def _UNSET(**kwargs):
     return "未绑定实现"
 
 
-__all__ = ["Tool"]
+__all__ = ["Tool", "can_grant_to_subtask"]
