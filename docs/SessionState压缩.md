@@ -76,7 +76,7 @@ Provider 在 **system 之后、历史之前** 插一条 user 消息。当前用�
 | `model/session_state.go` | `format_session_state_for_model` / `inject_session_state` |
 | `session_state` 表 | `store.save_compact_state` / `load_compact_state` |
 
-没有做 token calibrator（Suna 的系数校准）。小上下文窗口把安全垫按窗口缩放，避免 8k 预算永远被 8192 垫子打满。
+没有做 token calibrator（Suna 的系数校准）。压缩判断用模型真实 `context_window`（默认 128000），输出上限用 `max_output_tokens`（默认 8192），不再把旧的 8000 裁剪预算当成窗口。
 
 ---
 

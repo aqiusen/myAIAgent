@@ -80,6 +80,7 @@ class Runner:
         self.tools_list: List = []
         # 可选 Memory：每轮请求前按 Suna 做 Session State 压缩。
         self.memory = None
+        self.max_output_tokens = getattr(config, "max_output_tokens", 8192)
 
     def _one_call(
         self,
@@ -128,7 +129,7 @@ class Runner:
             messages=messages,
             tools=schemas,
             temperature=self.config.temperature,
-            max_tokens=self.config.max_tokens,
+            max_tokens=self.max_output_tokens,
             stream=stream,
             on_delta=on_delta,
             session_state=state,

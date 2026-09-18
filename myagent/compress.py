@@ -211,6 +211,31 @@ def choose_recent_keep_with_budget(messages: Messages, context_window: int, budg
     return keep
 
 
+def recent_window_covers_all(messages: Messages, context_window: int, budget: int) -> bool:
+    """recent 窗口已经覆盖全部对话时，折叠 1 条旧消息救不了预算（system/tools 才是大头）。"""
+    if not messages:
+        return True
+    target_turns = RECENT_TOOL_USER_TURNS if is_tool_heavy(messages) else RECENT_CHAT_USER_TURNS
+    if budget <= 0:
+        budget = _recent_window_token_budget(context_window, 0)
+    turns = 0
+    keep = 0
+    tokens = 0
+    for i in range(len(messages) - 1, -1, -1):
+        if keep >= MAX_RECENT_MESSAGES:
+            return False
+        msg_tokens = estimate_tokens(_message_blob(messages[i]))
+        if keep > 0 and budget > 0 and tokens + msg_tokens > budget:
+            return False
+        tokens += msg_tokens
+        keep += 1
+        if messages[i].get("role") == "user":
+            turns += 1
+            if turns >= target_turns:
+                return keep >= len(messages)
+    return keep >= len(messages)
+
+
 def expand_recent_start_for_tool_calls(messages: Messages, keep_start: int) -> int:
     """recent 里的 tool 结果必须带着产生它的 assistant tool_call。"""
     if keep_start <= 0 or keep_start >= len(messages):

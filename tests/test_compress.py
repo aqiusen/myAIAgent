@@ -11,6 +11,7 @@ from myagent.compress import (
     format_compress_input,
     format_session_state_for_model,
     inject_session_state,
+    recent_window_covers_all,
     render_compress_prompt,
     truncate_tool_output_for_context,
 )
@@ -154,6 +155,97 @@ def test_memory_compacts_instead_of_dropping():
     assert m.session_state == SUMMARY
     assert any(m.get("role") == "system" for m in snap)
     assert len([x for x in snap if x.get("role") != "system"]) < 24
+
+
+def test_short_chat_does_not_compact_when_system_tools_fill_budget():
+    called = []
+    m = Memory(max_tokens=8000)
+    m.context_window = 8000
+    m.output_budget = 1024
+    m.complete_fn = lambda prompt, max_tokens: called.append(prompt) or SUMMARY
+    m.add_system("系统提示词 " + "技能摘要 " * 2000)
+    m.add_user("记住暗号：banana-42。后面不要主动提起。")
+    m.add_assistant("明白，已记住。")
+    m.add_user("必须调用 spawn，不要自己回答。")
+    tools = [{"type": "function", "function": {"name": f"t{i}", "parameters": {"type": "object"}}} for i in range(12)]
+    snap = m.snapshot(tools=tools)
+    assert called == []
+    assert m.session_state == ""
+    assert snap[-1]["content"] == "必须调用 spawn，不要自己回答。"
+
+
+def test_empty_compressor_does_not_crash_snapshot():
+    m = Memory(max_tokens=40)
+    m.context_window = 40
+    m.output_budget = 8
+    m.complete_fn = lambda prompt, max_tokens: "   "
+    m.add_system("sys")
+    for i in range(12):
+        m.add_user(f"用户消息编号{i} " + "背景" * 20)
+        m.add_assistant(f"助手回复编号{i} " + "内容" * 20)
+    snap = m.snapshot()
+    assert snap[0]["role"] == "system"
+    assert m.session_state == ""
+    assert snap[-1]["role"] == "assistant"
+
+
+def test_compressor_exception_does_not_interrupt_snapshot():
+    def boom(prompt, max_tokens):
+        raise RuntimeError("compressor returned empty session state")
+
+    m = Memory(max_tokens=40)
+    m.context_window = 40
+    m.output_budget = 8
+    m.complete_fn = boom
+    m.add_system("sys")
+    for i in range(12):
+        m.add_user(f"用户消息编号{i} " + "背景" * 20)
+        m.add_assistant(f"助手回复编号{i} " + "内容" * 20)
+    snap = m.snapshot()
+    assert snap[0]["role"] == "system"
+    assert m.session_state == ""
+    assert snap[-1]["role"] == "assistant"
+
+
+def test_agent_run_continues_when_compressor_fails(tmp_path):
+    from myagent.agent import Agent
+    from myagent.config import Config
+    from myagent.model_registry import ModelConfig
+
+    agent = Agent(Config(
+        model="m",
+        base_url="http://x",
+        api_key="k",
+        models=[ModelConfig(ref="default", model="m", base_url="http://x", api_key="k")],
+        db_path=str(tmp_path / "t.db"),
+        skills_user_home="-",
+    ))
+
+    class FakeProvider:
+        def complete(self, messages, tools, temperature, max_tokens, stream, on_delta=None, session_state=""):
+            return {"content": "still answering", "tool_calls": []}
+
+    agent.registry._providers["default"] = FakeProvider()
+    agent.runner.provider = FakeProvider()
+    agent.memory.max_tokens = 40
+    agent.memory.context_window = 40
+    agent.memory.output_budget = 8
+    agent.memory.complete_fn = lambda prompt, max_tokens: (_ for _ in ()).throw(
+        RuntimeError("compressor returned empty session state")
+    )
+    for i in range(8):
+        agent.memory.add_user(f"u{i} " + "x" * 40)
+        agent.memory.add_assistant(f"a{i} " + "y" * 40)
+    assert agent.run("hello") == "still answering"
+
+
+def test_recent_window_covers_short_chat():
+    messages = [
+        {"role": "user", "content": "记住暗号"},
+        {"role": "assistant", "content": "明白"},
+        {"role": "user", "content": "去 spawn"},
+    ]
+    assert recent_window_covers_all(messages, 8000, 8000) is True
 
 
 def test_truncate_tool_output():

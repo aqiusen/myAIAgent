@@ -96,11 +96,12 @@ class Config:
     mcp_servers: List[MCPClient] = field(default_factory=list)
 
     temperature: float = 0.7   # 温度：越低越确定，越高越有创造力
-    max_tokens: int = 1024     # 单次生成上限，防止模型话痨烧钱
+    # 对照 Suna：窗口和输出上限是两件事，不能共用一个 8000。
+    context_window: int = 128000      # 模型真实上下文窗口（GPT 系测试常用值）
+    max_output_tokens: int = 8192     # 单次生成上限，必须小于 context_window
 
     # ---------- 记忆 / 上下文 ----------
     max_history: int = 20  # 裁剪前最多保留多少条用户/助手消息（见 memory.py）
-    max_tokens: int = 8000  # 上下文 token 预算，超过则裁剪旧消息
     # 会话持久化 DB 路径（默认项目 db/ 文件夹，空则关闭持久化）
     db_path: str = ""
 
@@ -159,6 +160,14 @@ class Config:
 
         model = os.environ.get("MY_AGENT_MODEL", "gpt-4o-mini")
         base_url = os.environ.get("MY_AGENT_BASE_URL", "https://api.openai.com/v1")
+        context_window = int(os.environ.get("MY_AGENT_CONTEXT_WINDOW", "128000"))
+        max_output_tokens = int(os.environ.get("MY_AGENT_MAX_OUTPUT_TOKENS", "8192"))
+        if context_window <= 0:
+            raise RuntimeError("MY_AGENT_CONTEXT_WINDOW 必须大于 0")
+        if max_output_tokens <= 0:
+            raise RuntimeError("MY_AGENT_MAX_OUTPUT_TOKENS 必须大于 0")
+        if max_output_tokens >= context_window:
+            raise RuntimeError("MY_AGENT_MAX_OUTPUT_TOKENS 必须小于 MY_AGENT_CONTEXT_WINDOW")
 
         # 主模型（第一个，ref=default）
         models = [
@@ -167,6 +176,8 @@ class Config:
                 model=model,
                 base_url=base_url,
                 api_key=api_key,
+                context_window=context_window,
+                max_output_tokens=max_output_tokens,
             )
         ]
         # 额外模型：MY_AGENT_MODELS 是 JSON 数组，如
@@ -183,11 +194,21 @@ class Config:
                             api_key=item.get("api_key", ""),
                             provider=item.get("provider", "openai"),
                             temperature=float(item.get("temperature", 0.7)),
-                            max_tokens=int(item.get("max_tokens", 1024)),
+                            context_window=int(item.get("context_window", context_window)),
+                            max_output_tokens=int(
+                                item.get("max_output_tokens", item.get("max_tokens", max_output_tokens))
+                            ),
                         )
                     )
             except (json.JSONDecodeError, ValueError) as exc:
                 raise RuntimeError(f"MY_AGENT_MODELS 解析失败: {exc}")
+        for mc in models:
+            if mc.context_window <= 0 or mc.max_output_tokens <= 0:
+                raise RuntimeError(f"模型 {mc.ref or '(unnamed)'} 的 context_window / max_output_tokens 必须大于 0")
+            if mc.max_output_tokens >= mc.context_window:
+                raise RuntimeError(
+                    f"模型 {mc.ref or '(unnamed)'} 的 max_output_tokens 必须小于 context_window"
+                )
 
         # MCP 服务器：MY_AGENT_MCP_SERVERS 是 JSON 数组，如
         #   [{"id":"fs","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","/tmp"]}]
@@ -225,7 +246,8 @@ class Config:
             mcp_servers=mcp_servers,
             guard_mode=os.environ.get("MY_AGENT_GUARD_MODE", "smart"),
             guard_audit_path=os.environ.get("MY_AGENT_GUARD_AUDIT", ""),
-            max_tokens=int(os.environ.get("MY_AGENT_MAX_TOKENS", "8000")),
+            context_window=context_window,
+            max_output_tokens=max_output_tokens,
             db_path=_db_path_from_env(),
             skills_dir=skills_dir,
             skills_records_path=records_path,

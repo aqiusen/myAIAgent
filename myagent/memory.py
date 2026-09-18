@@ -43,15 +43,17 @@ class Memory:
     def __init__(
         self,
         max_history: int = 20,
-        max_tokens: int = 8000,
+        max_tokens: int = 128000,
         store: Optional[object] = None,
         session_id: Optional[str] = None,
+        context_window: Optional[int] = None,
+        output_budget: Optional[int] = None,
     ):
         # 保存原始消息列表（含系统提示词、用户、助手、工具结果）。
         self._messages: Messages = []
         # 按条数裁剪上限（兜底）。
         self.max_history = max_history
-        # 按 token 数裁剪上限（主策略）。
+        # 硬裁剪上限：最后手段。压缩判断用 context_window，不要用一个更小的 8000。
         self.max_tokens = max_tokens
         # 可选持久化。
         self.store = store
@@ -60,8 +62,11 @@ class Memory:
         self.session_state = ""
         # 压缩 LLM：complete_fn(prompt, max_tokens) -> str。未设置时退回直接丢弃旧消息。
         self.complete_fn: Optional[Callable[[str, int], str]] = None
-        self.context_window = max_tokens
-        self.output_budget = min(1024, max(256, max_tokens // 4))
+        self.context_window = context_window if context_window is not None else max_tokens
+        if output_budget is not None:
+            self.output_budget = output_budget
+        else:
+            self.output_budget = min(8192, max(256, self.context_window // 16))
 
     # ---------- 增消息 ----------
     def add_system(self, content: str) -> None:
@@ -120,6 +125,7 @@ class Memory:
         from .compress import (
             compress_history_keeping_state,
             choose_recent_keep_with_budget,
+            recent_window_covers_all,
             should_compact_messages,
             trim_tool_results_for_context,
         )
@@ -129,31 +135,45 @@ class Memory:
         rest = trim_tool_results_for_context(rest)
         system_text = "\n".join(m.get("content") or "" for m in system)
 
-        if self.complete_fn and should_compact_messages(
+        over_budget = should_compact_messages(
             system_text, self.session_state, rest, tools,
             self.context_window, self.output_budget,
-        ):
+        )
+        # 8k 窗口里 system+tools 就会超预算；对话还在 recent 窗口内时不要为了折 1 条去调压缩模型。
+        nothing_to_fold = recent_window_covers_all(
+            rest, self.context_window, self.max_tokens,
+        ) and not (self.session_state or "").strip()
+        if self.complete_fn and over_budget and not nothing_to_fold:
             keep = choose_recent_keep_with_budget(
                 rest, self.context_window, self.max_tokens,
             )
-            rest, state, folded = compress_history_keeping_state(
-                rest,
-                self.session_state,
-                self.complete_fn,
-                keep_recent=keep,
-                context_window=self.context_window,
-                output_budget=self.output_budget,
-                recent_token_budget=self.max_tokens,
-            )
+            try:
+                rest, state, folded = compress_history_keeping_state(
+                    rest,
+                    self.session_state,
+                    self.complete_fn,
+                    keep_recent=keep,
+                    context_window=self.context_window,
+                    output_budget=self.output_budget,
+                    recent_token_budget=self.max_tokens,
+                )
+            except Exception:
+                # 压缩是尽力而为：空结果、网络失败、模型拒答都不能打断本轮对话。
+                rest = self._fallback_working(rest)
+                return system + rest
             if folded:
                 self.session_state = state
                 self._messages = system + rest
                 self._persist_compact()
         else:
-            rest = self._trim_by_tokens(rest)
-            if len(rest) > self.max_history:
-                rest = rest[-self.max_history:]
+            rest = self._fallback_working(rest)
         return system + rest
+
+    def _fallback_working(self, messages: Messages) -> Messages:
+        rest = self._trim_by_tokens(messages)
+        if len(rest) > self.max_history:
+            rest = rest[-self.max_history:]
+        return rest
 
     def _trim_by_tokens(self, messages: Messages) -> Messages:
         """按 token 预算裁剪：保留最近消息直到接近预算，丢弃最旧的。"""

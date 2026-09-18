@@ -43,6 +43,8 @@ def test_get_config():
     mc = reg.get_config("gpt4o")
     assert mc.model == "gpt-4o"
     assert mc.base_url == "http://y"
+    assert mc.context_window == 128000
+    assert mc.max_output_tokens == 8192
 
 
 def test_unsupported_provider_raises():

@@ -113,7 +113,6 @@ class Agent:
 
         self.memory = Memory(
             max_history=config.max_history,
-            max_tokens=config.max_tokens,
             store=self.store,
             session_id=session_id,
         )
@@ -173,7 +172,7 @@ class Agent:
         self.runner.confirm_callback = confirm_callback
         self.runner.memory = self.memory
         self.memory.complete_fn = self._compress_complete
-        self.memory.context_window = config.max_tokens
+        self._apply_model_limits(self.model_ref)
 
         # Skill 审查器复用当前模型；prompter 由 TUI 稍后注入。
         self.skills.set_reviewer(_FnSkillReviewer(_default_skill_reviewer(provider, config.model)))
@@ -209,7 +208,16 @@ class Agent:
             self.guard.llm_reviewer = _default_llm_reviewer(provider, model_name)
         self.skills.set_reviewer(_FnSkillReviewer(_default_skill_reviewer(provider, model_name)))
         self.model_ref = ref
+        self._apply_model_limits(ref)
         return ref
+
+    def _apply_model_limits(self, ref: str) -> None:
+        """按当前模型绑定窗口和输出上限（对照 Suna ModelBinding.ContextWindow / MaxOutputTokens）。"""
+        mc = self.registry.get_config(ref)
+        self.memory.context_window = mc.context_window
+        self.memory.max_tokens = mc.context_window
+        self.memory.output_budget = mc.max_output_tokens
+        self.runner.max_output_tokens = mc.max_output_tokens
 
     def set_skill_prompter(self, fn) -> None:
         """注入 skill_start 的用户选择回调（TUI 弹窗）。"""

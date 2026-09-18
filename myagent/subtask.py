@@ -98,7 +98,11 @@ def run_subtask(req: Request) -> Result:
     if req.provider is None:
         return failed_result("subtask model binding is required", False)
 
-    working = Memory(max_tokens=req.config.max_tokens)
+    working = Memory(
+        max_tokens=req.config.context_window,
+        context_window=req.config.context_window,
+        output_budget=req.config.max_output_tokens,
+    )
     working.add_system(req.system)
     working.add_user(req.task)
     working.complete_fn = _make_compress_fn(req.provider)

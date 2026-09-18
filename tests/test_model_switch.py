@@ -18,7 +18,14 @@ def make_config():
         api_key="k",
         models=[
             ModelConfig(ref="default", model="m1", base_url="http://x", api_key="k"),
-            ModelConfig(ref="vision", model="gpt-4o", base_url="http://y", api_key="k2"),
+            ModelConfig(
+                ref="vision",
+                model="gpt-4o",
+                base_url="http://y",
+                api_key="k2",
+                context_window=200000,
+                max_output_tokens=4096,
+            ),
         ],
     )
 
@@ -31,6 +38,9 @@ def test_list_models():
 def test_current_model_default():
     a = Agent(make_config(), confirm_callback=lambda p: False)
     assert a.current_model() == "default"
+    assert a.memory.context_window == 128000
+    assert a.memory.output_budget == 8192
+    assert a.runner.max_output_tokens == 8192
 
 
 def test_switch_model():
@@ -38,6 +48,9 @@ def test_switch_model():
     a.switch_model("vision")
     assert a.current_model() == "vision"
     assert a.runner.provider.model == "gpt-4o"
+    assert a.memory.context_window == 200000
+    assert a.memory.output_budget == 4096
+    assert a.runner.max_output_tokens == 4096
 
 
 def test_switch_back_to_default():

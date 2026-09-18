@@ -27,7 +27,8 @@ class ModelConfig:
     api_key: str                # 凭据
     provider: str = "openai"    # 提供商类型（当前只支持 openai 兼容）
     temperature: float = 0.7
-    max_tokens: int = 1024
+    context_window: int = 128000     # 对照 Suna ContextWindow：模型真实窗口
+    max_output_tokens: int = 8192    # 对照 Suna MaxOutputTokens：单次生成上限
 
 
 class ModelRegistry:
